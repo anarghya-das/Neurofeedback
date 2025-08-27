@@ -96,6 +96,11 @@ class _EEGViewerState extends State<EEGViewer> {
       final connected = await _lslService.connectToStream(selectedStream);
 
       if (connected) {
+        // Update the data manager with the stream's sampling rate
+        if (selectedStream.nominalSampleRate > 0) {
+          _dataManager.updateSamplingRate(selectedStream.nominalSampleRate);
+        }
+
         setState(() {
           _statusText =
               'Connected to ${selectedStream.name} (ID: ${selectedStream.id})';

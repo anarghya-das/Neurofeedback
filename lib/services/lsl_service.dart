@@ -47,11 +47,8 @@ class LSLService {
       final streamInfoList = streams.asMap().entries.map((entry) {
         int index = entry.key;
         ResolvedStreamHandle handle = entry.value;
-        return StreamInfo(
-          handle: handle,
-          name: 'LSL Stream ${index + 1}',
-          channelCount: 0, // Will be determined after connection
-        );
+
+        return StreamInfo.fromHandle(handle, index: index);
       }).toList();
 
       developer.log('Found ${streamInfoList.length} stream(s)');
@@ -112,6 +109,25 @@ class LSLService {
     } catch (e) {
       developer.log('Error starting stream: $e');
       rethrow;
+    }
+  }
+
+  /// Get enhanced stream metadata after connection
+  /// This attempts to get additional stream information that may not be available before connection
+  Future<StreamInfo?> getStreamMetadata(StreamInfo streamInfo) async {
+    if (!_isInitialized || _inletWorker == null) {
+      return null;
+    }
+
+    try {
+      // For now, we'll just return the existing stream info
+      // In the future, this could be enhanced to get more detailed metadata
+      // from the connected inlet
+      developer.log('Getting metadata for stream: ${streamInfo.id}');
+      return streamInfo;
+    } catch (e) {
+      developer.log('Error getting stream metadata: $e');
+      return null;
     }
   }
 

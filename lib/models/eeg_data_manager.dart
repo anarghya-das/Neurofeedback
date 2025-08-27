@@ -6,10 +6,21 @@ class EEGDataManager {
   List<Queue<FlSpot>> _channelData = [];
   int _channelCount = 0;
   double _timeIndex = 0;
-  final double samplingRate;
+  double _samplingRate;
   final double maxTimeWindow;
 
-  EEGDataManager({this.samplingRate = 250.0, this.maxTimeWindow = 10.0});
+  EEGDataManager({double samplingRate = 250.0, this.maxTimeWindow = 10.0})
+    : _samplingRate = samplingRate;
+
+  /// Get the current sampling rate
+  double get samplingRate => _samplingRate;
+
+  /// Update the sampling rate (useful when connecting to a new stream)
+  void updateSamplingRate(double newSamplingRate) {
+    if (newSamplingRate > 0) {
+      _samplingRate = newSamplingRate;
+    }
+  }
 
   /// Get the number of channels
   int get channelCount => _channelCount;
@@ -46,7 +57,7 @@ class EEGDataManager {
       _maintainWindowSize(i);
     }
 
-    _timeIndex += 1.0 / samplingRate;
+    _timeIndex += 1.0 / _samplingRate;
   }
 
   /// Parse value from sample data, handling non-numeric data
@@ -60,7 +71,7 @@ class EEGDataManager {
 
   /// Maintain the time window size for a channel
   void _maintainWindowSize(int channelIndex) {
-    int maxPoints = (maxTimeWindow * samplingRate).round();
+    int maxPoints = (maxTimeWindow * _samplingRate).round();
     while (_channelData[channelIndex].length > maxPoints) {
       _channelData[channelIndex].removeFirst();
     }

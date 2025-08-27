@@ -55,7 +55,9 @@ class StreamSelector extends StatelessWidget {
                             : null,
                       ),
                       title: Text(stream.name),
-                      subtitle: Text('ID: ${stream.id}'),
+                      subtitle: Text(
+                        'ID: ${stream.id} • Channels: ${stream.channelCount} • ${stream.nominalSampleRate}Hz • ${stream.type}',
+                      ),
                     ),
                   );
                 },
