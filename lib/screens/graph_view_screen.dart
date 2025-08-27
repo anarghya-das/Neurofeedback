@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/eeg_data_manager.dart';
-import '../widgets/eeg_chart.dart';
 import '../widgets/chart_controls.dart';
+import '../widgets/stacked_eeg_chart.dart';
 
 /// Screen for displaying EEG graphs
 class GraphViewScreen extends StatelessWidget {
@@ -26,26 +26,26 @@ class GraphViewScreen extends StatelessWidget {
       return const Center(child: Text('No graph data available'));
     }
 
+    final fullScale = (amplitudeScale >= 20 && amplitudeScale <= 1000)
+        ? amplitudeScale
+        : 200.0;
+
     return Column(
       children: [
         ChartControls(
           timeWindowSeconds: timeWindowSeconds,
-          amplitudeScale: amplitudeScale,
+          amplitudeScale: fullScale,
           onTimeWindowChanged: onTimeWindowChanged,
           onAmplitudeScaleChanged: onAmplitudeScaleChanged,
         ),
         Expanded(
-          child: ListView.builder(
-            itemCount: dataManager.channelCount,
-            itemBuilder: (context, channelIndex) {
-              return EEGChart(
-                channelData: dataManager.getChannelData(channelIndex),
-                channelIndex: channelIndex,
-                timeWindowSeconds: timeWindowSeconds,
-                amplitudeScale: amplitudeScale,
-                title: 'Channel ${channelIndex + 1}',
-              );
-            },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+            child: StackedEEGChart(
+              channelData: dataManager.allChannelData,
+              timeWindowSeconds: timeWindowSeconds,
+              fullScaleUv: fullScale,
+            ),
           ),
         ),
       ],
