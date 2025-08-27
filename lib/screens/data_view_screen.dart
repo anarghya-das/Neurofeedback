@@ -12,7 +12,6 @@ class DataViewScreen extends StatelessWidget {
   final bool isStreaming;
   final String? openInletId;
   final VoidCallback onSearchStreams;
-  final VoidCallback? onConnectToSelected;
   final Function(int) onStreamSelected;
   final VoidCallback? onStartStreaming;
   final VoidCallback? onStopStreaming;
@@ -26,7 +25,6 @@ class DataViewScreen extends StatelessWidget {
     required this.isStreaming,
     required this.openInletId,
     required this.onSearchStreams,
-    required this.onConnectToSelected,
     required this.onStreamSelected,
     required this.onStartStreaming,
     required this.onStopStreaming,
@@ -41,22 +39,9 @@ class DataViewScreen extends StatelessWidget {
         children: <Widget>[
           StatusDisplay(statusText: statusText),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: onSearchStreams,
-                  child: const Text('Search for Streams'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: onConnectToSelected,
-                  child: const Text('Connect to Selected'),
-                ),
-              ),
-            ],
+          ElevatedButton(
+            onPressed: onSearchStreams,
+            child: const Text('Search for Streams'),
           ),
           const SizedBox(height: 16),
           StreamSelector(

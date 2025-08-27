@@ -119,6 +119,15 @@ class _EEGViewerState extends State<EEGViewer> {
 
   Future<void> _startStreaming() async {
     try {
+      // If not connected to a stream, connect to the selected one first
+      if (_lslService.openInletId == null && _selectedStreamIndex != null) {
+        await _connectToSelectedStream();
+        // If connection failed, don't proceed with streaming
+        if (_lslService.openInletId == null) {
+          return;
+        }
+      }
+
       final stream = await _lslService.startStreaming();
 
       _sampleSubscription = stream.listen((sample) {
@@ -190,12 +199,9 @@ class _EEGViewerState extends State<EEGViewer> {
               isStreaming: _lslService.isStreaming,
               openInletId: _lslService.openInletId,
               onSearchStreams: _searchForStreams,
-              onConnectToSelected: _selectedStreamIndex != null
-                  ? _connectToSelectedStream
-                  : null,
               onStreamSelected: _onStreamSelected,
               onStartStreaming:
-                  _lslService.openInletId != null && !_lslService.isStreaming
+                  _selectedStreamIndex != null && !_lslService.isStreaming
                   ? _startStreaming
                   : null,
               onStopStreaming: _lslService.isStreaming ? _stopStreaming : null,
