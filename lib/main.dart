@@ -34,14 +34,29 @@ class EEGViewer extends StatefulWidget {
   State<EEGViewer> createState() => _EEGViewerState();
 }
 
+class StreamInfo {
+  final ResolvedStreamHandle handle;
+  final String name;
+  final int channelCount;
+
+  StreamInfo({
+    required this.handle,
+    required this.name,
+    required this.channelCount,
+  });
+
+  String get id => handle.id;
+}
+
 class _EEGViewerState extends State<EEGViewer> {
   InletWorker? _inletWorker;
-  List<ResolvedStreamHandle> _availableStreams = [];
+  List<StreamInfo> _availableStreams = [];
   String _statusText = 'Ready to search for streams';
   String _latestSample = 'No samples yet';
   bool _isStreaming = false;
   StreamSubscription? _sampleSubscription;
   String? _openInletId;
+  int? _selectedStreamIndex; // Track which stream is selected
 
   // Time series data storage
   List<Queue<FlSpot>> _channelData = [];
@@ -86,7 +101,16 @@ class _EEGViewerState extends State<EEGViewer> {
     try {
       final streams = await _inletWorker!.resolveStreams();
       setState(() {
-        _availableStreams = streams;
+        _availableStreams = streams.asMap().entries.map((entry) {
+          int index = entry.key;
+          ResolvedStreamHandle handle = entry.value;
+          return StreamInfo(
+            handle: handle,
+            name: 'LSL Stream ${index + 1}', // More descriptive naming
+            channelCount: 0, // Will be determined after connection
+          );
+        }).toList();
+        _selectedStreamIndex = null; // Reset selection
         _statusText = 'Found ${_availableStreams.length} stream(s)';
       });
 
@@ -102,10 +126,13 @@ class _EEGViewerState extends State<EEGViewer> {
     }
   }
 
-  Future<void> _connectToFirstStream() async {
-    if (_inletWorker == null || _availableStreams.isEmpty) {
+  Future<void> _connectToSelectedStream() async {
+    if (_inletWorker == null ||
+        _availableStreams.isEmpty ||
+        _selectedStreamIndex == null ||
+        _selectedStreamIndex! >= _availableStreams.length) {
       setState(() {
-        _statusText = 'No streams available to connect to';
+        _statusText = 'No valid stream selected to connect to';
       });
       return;
     }
@@ -115,15 +142,16 @@ class _EEGViewerState extends State<EEGViewer> {
     });
 
     try {
-      final firstStream = _availableStreams.first;
-      final opened = await _inletWorker!.open(firstStream.id);
+      final selectedStream = _availableStreams[_selectedStreamIndex!];
+      final opened = await _inletWorker!.open(selectedStream.handle.id);
 
       if (opened) {
-        _openInletId = firstStream.id;
+        _openInletId = selectedStream.id;
         setState(() {
-          _statusText = 'Connected to stream ID: ${firstStream.id}';
+          _statusText =
+              'Connected to ${selectedStream.name} (ID: ${selectedStream.id})';
         });
-        developer.log('Connected to stream ID: ${firstStream.id}');
+        developer.log('Connected to stream ID: ${selectedStream.id}');
       } else {
         setState(() {
           _statusText = 'Failed to connect to stream';
@@ -438,15 +466,68 @@ class _EEGViewerState extends State<EEGViewer> {
               const SizedBox(width: 8),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: _availableStreams.isNotEmpty
-                      ? _connectToFirstStream
+                  onPressed: _selectedStreamIndex != null
+                      ? _connectToSelectedStream
                       : null,
-                  child: const Text('Connect to First Stream'),
+                  child: const Text('Connect to Selected'),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
+          // Stream selection area
+          if (_availableStreams.isNotEmpty) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Available Streams (Select one):',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 200,
+                      child: ListView.builder(
+                        itemCount: _availableStreams.length,
+                        itemBuilder: (context, index) {
+                          final stream = _availableStreams[index];
+                          final isSelected = _selectedStreamIndex == index;
+
+                          return Card(
+                            color: isSelected
+                                ? Theme.of(context).colorScheme.primaryContainer
+                                : null,
+                            child: ListTile(
+                              selected: isSelected,
+                              onTap: () {
+                                setState(() {
+                                  _selectedStreamIndex = index;
+                                });
+                              },
+                              leading: Icon(
+                                isSelected
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_unchecked,
+                                color: isSelected
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                              title: Text(stream.name),
+                              subtitle: Text('ID: ${stream.id}'),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
           Row(
             children: [
               Expanded(
@@ -492,32 +573,6 @@ class _EEGViewerState extends State<EEGViewer> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          if (_availableStreams.isNotEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Available Streams:',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    ..._availableStreams.map(
-                      (stream) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2.0),
-                        child: Text(
-                          '• Stream ID: ${stream.id}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
         ],
       ),
     );
