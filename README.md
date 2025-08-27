@@ -1,129 +1,168 @@
 # EEG Viewer LSL
 
-A Flutter application for viewing EEG data streams using the Lab Streaming Layer (LSL) protocol.
+A consolidated README for the EEG Viewer LSL project. This document combines the main project README with architecture notes, stream-selection details, enhanced StreamInfo documentation, and a short note about launch screen assets.
+
+## Table of contents
+
+- Project overview
+- Features
+- Getting started
+- Usage
+- Architecture (refactor summary)
+- Stream selection
+- Enhanced StreamInfo
+- Platform-specific notes & launch assets
+- Testing
+- Troubleshooting
+- License
+
+## Project overview
+
+A Flutter application for discovering, connecting to, and visualizing EEG data streams using the Lab Streaming Layer (LSL) protocol.
+
+Cross-platform: macOS, Windows, iOS, Android (and Linux/web where supported).
 
 ## Features
 
-- **LSL Stream Discovery**: Search for available LSL streams on the local network
-- **Stream Connection**: Connect to the first discovered stream
-- **Real-time Data Display**: View streaming sample data and timestamps
-- **Cross-platform**: Works on macOS, Windows, iOS, and Android
+- LSL stream discovery and resolution
+- Stream selection UI (choose which discovered stream to connect)
+- Inlet worker runs in an isolate for non-blocking data reception
+- Real-time sample display and time-series graphing
+- Modular code structure for maintainability and testing
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
-- Flutter SDK (3.10.0 or higher)
-- An LSL stream source (e.g., OpenBCI, EEG device, or LSL simulator)
+- Flutter SDK (recommended 3.10.0 or higher)
+- An LSL outlet/source (device, simulator, or generator)
 
 ### Installation
 
 1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd eeg_viewer_lsl
-   ```
+    ```bash
+    git clone <repository-url>
+    cd eeg_viewer_lsl
+    ```
 
 2. Install dependencies:
-   ```bash
-   flutter pub get
-   ```
+    ```bash
+    flutter pub get
+    ```
 
-3. Run the application:
-   ```bash
-   flutter run -d macos  # For macOS
-   flutter run -d windows  # For Windows
-   flutter run -d android  # For Android
-   flutter run -d ios  # For iOS
-   ```
+3. Run the application on your platform of choice:
+    ```bash
+    flutter run -d macos
+    flutter run -d windows
+    flutter run -d android
+    flutter run -d ios
+    ```
 
-## Using the Application
+## Usage
 
-1. **Initialize**: The app will automatically initialize the LSL inlet worker on startup
-2. **Search for Streams**: Click "Search for Streams" to discover available LSL streams on the network
-3. **Connect**: Click "Connect to First Stream" to connect to the first discovered stream
-4. **Start Streaming**: Click "Start Streaming" to begin receiving and displaying data
-5. **View Data**: The latest sample data and timestamp will be displayed in real-time
-6. **Stop Streaming**: Click "Stop Streaming" to pause data reception
+1. Open the app and navigate to the Data tab
+2. Discover available LSL streams (the app can also auto-discover on startup)
+3. Use the Stream Selection UI to pick a stream if you prefer a specific outlet
+4. Connect and start streaming to view samples and live graphs
 
-## LSL Integration Details
+## Architecture (refactor summary)
 
-This application uses the `lsl_flutter` package which provides:
+The app has been refactored into a modular structure for clarity and testability.
 
-- **InletWorker**: Handles LSL inlet operations in an isolate to prevent blocking the UI
-- **Stream Resolution**: Discovers LSL streams available on the local network
-- **Sample Streaming**: Receives real-time data samples with timestamps
-- **Cross-platform Support**: Works on all major platforms supported by Flutter
+Key folders under `lib/`:
 
-### Code Structure
+- `models/` — data models like `stream_info.dart` and `eeg_data_manager.dart`
+- `services/` — LSL integration (`lsl_service.dart`) and related logic
+- `screens/` — UI pages (`eeg_viewer_screen.dart`, `data_view_screen.dart`, `graph_view_screen.dart`)
+- `widgets/` — reusable widgets (`eeg_chart.dart`, `stream_selector.dart`, `chart_controls.dart`, `status_display.dart`)
+- `utils/` — utilities such as `chart_utils.dart`
 
-- `main.dart`: Contains the main Flutter application with LSL integration
-- Uses `InletWorker.spawn()` to create an isolate worker for LSL operations
-- Implements stream discovery, connection, and data reception
-- Displays stream status and real-time sample data
+Benefits: separation of concerns, easier testing, improved reusability, and scalability.
 
-## Platform-Specific Setup
+## Stream selection
 
-### macOS
-- Network permissions are handled automatically
-- For production apps, you may need to add multicast entitlements
+The app supports interactive stream selection rather than auto-connecting to the first discovered stream. Main points:
 
-### iOS
-- Requires `NSLocalNetworkUsageDescription` in Info.plist
-- Needs multicast entitlement from Apple for App Store distribution
+- Stream discovery populates a list of `ResolvedStreamHandle` objects
+- A `RadioListTile`-based selector shows stream name, channel count and basic metadata
+- The selected stream index is tracked (e.g. `_selectedStreamIndex`) and user-initiated connect uses the selected stream
+- UI includes validation and clear error/status messages
 
-### Android
-- Minimum SDK version must be 26
-- Requires internet and network state permissions
-- Uses multicast lock for network discovery
+Example UI snippet:
 
-### Windows
-- No special setup required
+```dart
+ListView.builder(
+   itemCount: streams.length,
+   itemBuilder: (context, index) {
+      return RadioListTile<int>(
+         title: Text('${streams[index].name}'),
+         subtitle: Text('Channels: ${streams[index].channelCount}'),
+         value: index,
+         groupValue: _selectedStreamIndex,
+         onChanged: (value) => setState(() => _selectedStreamIndex = value!),
+      );
+   },
+);
+```
+
+## Enhanced StreamInfo
+
+The `StreamInfo` model has been improved to read real metadata from `ResolvedStreamHandle.info` instead of placeholders. Available LSL properties typically include:
+
+- `name`, `channelCount`, `nominalSRate`, `type`, `sourceId`, `hostname`, `uid`, `sessionId`, `createdAt`
+
+Factory example:
+
+```dart
+factory StreamInfo.fromHandle(ResolvedStreamHandle handle, {int index = 0}) {
+   final lslInfo = handle.info;
+   return StreamInfo(
+      handle: handle,
+      name: lslInfo.name.isNotEmpty ? lslInfo.name : 'LSL Stream ${index + 1}',
+      channelCount: lslInfo.channelCount,
+      nominalSampleRate: lslInfo.nominalSRate,
+      type: lslInfo.type.isNotEmpty ? lslInfo.type : 'Unknown',
+   );
+}
+```
+
+Benefits: accurate sampling rates, correct buffer sizing, meaningful UI labels, and safer processing.
+
+## Platform-specific notes & launch assets
+
+macOS
+- Network permissions generally handled automatically; production apps may need multicast entitlements.
+
+iOS
+- Add `NSLocalNetworkUsageDescription` to `Info.plist` and ensure multicast entitlement if distributing via the App Store.
+
+Android
+- Minimum SDK 26; internet and network state permissions required. Multicast lock used for discovery.
+
+Launch screen assets
+
+You can customize the iOS launch screen images in `ios/Runner/Assets.xcassets` by replacing the images in the `LaunchImage.imageset` directory. Open Xcode with `open ios/Runner.xcworkspace` and update assets visually if preferred.
 
 ## Testing
 
-To test the application, you'll need an LSL stream source. You can:
+To test without hardware, run an LSL generator/outlet. Example Python generator:
 
-1. Use an actual EEG device that supports LSL
-2. Use the LSL test applications available from the [LSL repository](https://github.com/sccn/labstreaminglayer)
-3. Create a simple LSL outlet using Python or other programming languages
-
-Example Python LSL outlet for testing:
 ```python
 from pylsl import StreamInfo, StreamOutlet
-import time
-import random
+import time, random
 
-# Create stream info
 info = StreamInfo('TestEEG', 'EEG', 8, 250, 'float32', 'myuid34234')
 outlet = StreamOutlet(info)
 
-# Send data
 while True:
-    sample = [random.random() for _ in range(8)]
-    outlet.push_sample(sample)
-    time.sleep(1.0/250)  # 250 Hz
+      sample = [random.random() for _ in range(8)]
+      outlet.push_sample(sample)
+      time.sleep(1.0/250)
 ```
-
-## Dependencies
-
-- `flutter`: SDK
-- `lsl_flutter`: ^0.0.6 - LSL integration for Flutter
-- `cupertino_icons`: ^1.0.8 - iOS-style icons
-
-## Development
-
-This project uses the LSL Flutter package to integrate with the Lab Streaming Layer. The package provides high-level APIs for discovering streams, connecting to inlets, and receiving real-time data.
-
-For more information about LSL, visit: https://labstreaminglayer.readthedocs.io/
 
 ## Troubleshooting
 
-- **No streams found**: Ensure your LSL source is running and broadcasting on the same network
-- **Connection failed**: Check network permissions and firewall settings
-- **Build errors on macOS**: Ensure entitlements are properly configured for your signing certificate
-- **Performance issues**: The app uses isolate workers to prevent UI blocking, but very high-frequency streams may still impact performance
-
-## License
-
-This project is open source. Please check the LICENSE file for details.
+- No streams found: ensure generators are on the same network and broadcasting
+- Connection failed: check firewall and platform network permissions
+- Build errors (macOS/iOS): verify entitlements and signing
+- Performance: isolate workers are used but very high-rate streams may still affect performance
