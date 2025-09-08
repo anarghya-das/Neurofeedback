@@ -96,7 +96,7 @@ class _Painter extends CustomPainter {
     final gridPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
-      ..color = Colors.grey.withOpacity(0.25);
+      ..color = Colors.grey.withValues(alpha: 0.25);
     for (int i = 0; i <= timeWindow.ceil(); i++) {
       final dx = contentLeft + i * xScale;
       canvas.drawLine(
@@ -112,7 +112,7 @@ class _Painter extends CustomPainter {
     final rowSepPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
-      ..color = Colors.grey.withOpacity(0.5);
+      ..color = Colors.grey.withValues(alpha: 0.5);
 
     for (int ch = 0; ch < rowCount; ch++) {
       final rowTop = contentTop + ch * rowHeight;
