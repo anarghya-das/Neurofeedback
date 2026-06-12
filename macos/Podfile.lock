@@ -1,22 +1,53 @@
 PODS:
+  - audio_session (0.0.1):
+    - FlutterMacOS
+  - desktop_multi_window (0.0.1):
+    - FlutterMacOS
+  - file_picker (0.0.1):
+    - FlutterMacOS
   - FlutterMacOS (1.0.0)
+  - just_audio (0.0.1):
+    - Flutter
+    - FlutterMacOS
   - lsl_bindings (0.0.1):
+    - FlutterMacOS
+  - spectrum_lib (1.0.0):
     - FlutterMacOS
 
 DEPENDENCIES:
+  - audio_session (from `Flutter/ephemeral/.symlinks/plugins/audio_session/macos`)
+  - desktop_multi_window (from `Flutter/ephemeral/.symlinks/plugins/desktop_multi_window/macos`)
+  - file_picker (from `Flutter/ephemeral/.symlinks/plugins/file_picker/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
+  - just_audio (from `Flutter/ephemeral/.symlinks/plugins/just_audio/darwin`)
   - lsl_bindings (from `Flutter/ephemeral/.symlinks/plugins/lsl_bindings/macos`)
+  - spectrum_lib (from `Flutter/ephemeral/.symlinks/plugins/spectrum_lib/macos`)
 
 EXTERNAL SOURCES:
+  audio_session:
+    :path: Flutter/ephemeral/.symlinks/plugins/audio_session/macos
+  desktop_multi_window:
+    :path: Flutter/ephemeral/.symlinks/plugins/desktop_multi_window/macos
+  file_picker:
+    :path: Flutter/ephemeral/.symlinks/plugins/file_picker/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
+  just_audio:
+    :path: Flutter/ephemeral/.symlinks/plugins/just_audio/darwin
   lsl_bindings:
     :path: Flutter/ephemeral/.symlinks/plugins/lsl_bindings/macos
+  spectrum_lib:
+    :path: Flutter/ephemeral/.symlinks/plugins/spectrum_lib/macos
 
 SPEC CHECKSUMS:
+  audio_session: eaca2512cf2b39212d724f35d11f46180ad3a33e
+  desktop_multi_window: 93667594ccc4b88d91a97972fd3b1b89667fa80a
+  file_picker: 7584aae6fa07a041af2b36a2655122d42f578c1a
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
-  lsl_bindings: 1500974b104af85b6de429721680369068d9dbe1
+  just_audio: 4e391f57b79cad2b0674030a00453ca5ce817eed
+  lsl_bindings: 5e6056e6017df8ab7018b7391d0ffc1f59408c4b
+  spectrum_lib: 9245dcc5f70a4b31ab7f756e60e24c9b1ac53aaf
 
 PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
 
-COCOAPODS: 1.15.2
+COCOAPODS: 1.16.2

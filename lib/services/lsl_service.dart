@@ -44,12 +44,21 @@ class LSLService {
       developer.log('Searching for LSL streams...');
       final streams = await _inletWorker!.resolveStreams();
 
-      final streamInfoList = streams.asMap().entries.map((entry) {
-        int index = entry.key;
-        ResolvedStreamHandle handle = entry.value;
+      final streamInfoList = streams
+          .asMap()
+          .entries
+          .map((entry) {
+            final index = entry.key;
+            final handle = entry.value;
+            return StreamInfo.fromHandle(handle, index: index);
+          })
+          .where((stream) {
+            final name = stream.name.toLowerCase();
+            final type = stream.type.toLowerCase();
 
-        return StreamInfo.fromHandle(handle, index: index);
-      }).toList();
+            return type == 'eeg' && type != 'markers' && name != 'audiomarkers';
+          })
+          .toList();
 
       developer.log('Found ${streamInfoList.length} stream(s)');
       for (int i = 0; i < streamInfoList.length; i++) {

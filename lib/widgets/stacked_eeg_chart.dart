@@ -2,22 +2,21 @@ import 'dart:collection';
 import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart' show FlSpot;
 import 'package:flutter/material.dart';
+import '../models/stimulus_marker.dart';
 import '../utils/chart_utils.dart';
 
-/// Stacked multi-channel EEG chart with shared time axis (0..window),
-/// per-row ±full-scale labels, channel badges, and right-side RMS.
 class StackedEEGChart extends StatelessWidget {
   final List<Queue<FlSpot>> channelData;
   final double timeWindowSeconds;
-
-  /// Vertical full-scale in microvolts for each row (draws ±fullScaleUv labels)
   final double fullScaleUv;
+  final List<StimulusMarker> markers;
 
   const StackedEEGChart({
     super.key,
     required this.channelData,
     required this.timeWindowSeconds,
     required this.fullScaleUv,
+    required this.markers,
   });
 
   @override
@@ -32,6 +31,7 @@ class StackedEEGChart extends StatelessWidget {
           channels: nonEmpty,
           timeWindow: timeWindowSeconds,
           fullScaleUv: fullScaleUv,
+          markers: markers,
         ),
       ),
     );
@@ -42,17 +42,18 @@ class _Painter extends CustomPainter {
   final List<Queue<FlSpot>> channels;
   final double timeWindow;
   final double fullScaleUv;
+  final List<StimulusMarker> markers;
 
   _Painter({
     required this.channels,
     required this.timeWindow,
     required this.fullScaleUv,
+    required this.markers,
   });
 
-  // Layout
-  final double _leftGutter = 72; // badges + labels
-  final double _rightGutter = 96; // RMS text
-  final double _bottomAxis = 40; // time axis
+  final double _leftGutter = 72;
+  final double _rightGutter = 96;
+  final double _bottomAxis = 40;
   final double _topPadding = 8;
   final double _rowInnerPadding = 8;
   final double _badgeRadius = 14;
@@ -62,14 +63,12 @@ class _Painter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..isAntiAlias = true;
 
-    // Outer border
     paint
       ..style = PaintingStyle.stroke
       ..strokeWidth = _borderWidth
       ..color = Colors.grey.shade700;
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
 
-    // Content rect
     final contentLeft = _leftGutter;
     final contentRight = size.width - _rightGutter;
     final contentTop = _topPadding;
@@ -77,13 +76,11 @@ class _Painter extends CustomPainter {
     final contentWidth = math.max(0, contentRight - contentLeft);
     final contentHeight = math.max(0, contentBottom - contentTop);
 
-    // Time bounds based on latest sample time across channels
     final lastX = channels
         .map((q) => q.isNotEmpty ? q.last.x : 0.0)
         .reduce((a, b) => a > b ? a : b);
     final minX = lastX - timeWindow;
 
-    // Visible points per channel
     final visible = <int, List<FlSpot>>{};
     for (int i = 0; i < channels.length; i++) {
       visible[i] = channels[i]
@@ -91,12 +88,12 @@ class _Painter extends CustomPainter {
           .toList(growable: false);
     }
 
-    // Grid lines (every 1s) from 0..timeWindow
     final xScale = contentWidth / timeWindow;
     final gridPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
       ..color = Colors.grey.withOpacity(0.25);
+
     for (int i = 0; i <= timeWindow.ceil(); i++) {
       final dx = contentLeft + i * xScale;
       canvas.drawLine(
@@ -106,7 +103,16 @@ class _Painter extends CustomPainter {
       );
     }
 
-    // Row layout
+    _drawMarkers(
+      canvas,
+      contentLeft,
+      contentTop,
+      contentBottom,
+      minX,
+      lastX,
+      xScale,
+    );
+
     final rowCount = channels.length;
     final rowHeight = rowCount > 0 ? contentHeight / rowCount : contentHeight;
     final rowSepPaint = Paint()
@@ -119,7 +125,6 @@ class _Painter extends CustomPainter {
       final rowBottom = rowTop + rowHeight;
       final rowCenter = (rowTop + rowBottom) / 2;
 
-      // Row separator
       if (ch > 0) {
         canvas.drawLine(
           Offset(contentLeft, rowTop),
@@ -128,7 +133,6 @@ class _Painter extends CustomPainter {
         );
       }
 
-      // ±full-scale labels left
       const labelStyle = TextStyle(color: Colors.black87, fontSize: 12);
       _drawText(
         canvas,
@@ -143,7 +147,6 @@ class _Painter extends CustomPainter {
         labelStyle,
       );
 
-      // Channel badge
       final badgeCenter = Offset(_leftGutter - 28, rowCenter);
       final color = ChartUtils.getChannelColor(ch);
       paint
@@ -157,14 +160,22 @@ class _Painter extends CustomPainter {
         const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
       );
 
-      // Waveform path
-      final pts = visible[ch]!;
+      final rawPoints = visible[ch]!;
+
+      final mean = rawPoints.isEmpty
+          ? 0.0
+          : rawPoints.map((p) => p.y).reduce((a, b) => a + b) /
+                rawPoints.length;
+
+      final pts = rawPoints.map((p) => FlSpot(p.x, p.y - mean)).toList();
       if (pts.length >= 2) {
         final path = Path();
         final halfHeight = (rowHeight - _rowInnerPadding * 2) / 2;
+
         Offset toPx(FlSpot p) {
           final x = contentLeft + (p.x - minX) * xScale;
-          final y = rowCenter - (p.y / fullScaleUv) * halfHeight;
+          final clippedY = p.y.clamp(-fullScaleUv, fullScaleUv).toDouble();
+          final y = rowCenter - (clippedY / fullScaleUv) * halfHeight;
           return Offset(x, y);
         }
 
@@ -173,18 +184,32 @@ class _Painter extends CustomPainter {
           final o = toPx(pts[i]);
           path.lineTo(o.dx, o.dy);
         }
+
         paint
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5
           ..color = color;
+
+        canvas.save();
+        canvas.clipRect(
+          Rect.fromLTRB(
+            contentLeft,
+            rowTop + _rowInnerPadding,
+            contentRight,
+            rowBottom - _rowInnerPadding,
+          ),
+        );
         canvas.drawPath(path, paint);
+        canvas.restore();
       }
 
-      // Right-side RMS label (raw µV)
       final rms = _rms(visible[ch]!);
-      final rmsText = rms != null
-          ? '${rms.toStringAsFixed(1)} uVrms'
-          : '-- uVrms';
+      final rmsText = rms == null
+          ? '-- uVrms'
+          : rms > 9999
+          ? '${(rms / 1000).toStringAsFixed(1)} mVrms'
+          : '${rms.toStringAsFixed(1)} uVrms';
+
       _drawText(
         canvas,
         rmsText,
@@ -193,9 +218,8 @@ class _Painter extends CustomPainter {
       );
     }
 
-    // Bottom axis (0..timeWindow)
     final axisY = contentBottom + 4;
-    final axisStyle = const TextStyle(fontSize: 12, color: Colors.black87);
+    const axisStyle = TextStyle(fontSize: 12, color: Colors.black87);
     for (int i = 0; i <= timeWindow.ceil(); i++) {
       final dx = contentLeft + i * xScale;
       canvas.drawLine(
@@ -207,6 +231,7 @@ class _Painter extends CustomPainter {
       );
       _drawCenteredText(canvas, '$i', Offset(dx, axisY + 10), axisStyle);
     }
+
     _drawCenteredText(
       canvas,
       'Time (s)',
@@ -219,13 +244,85 @@ class _Painter extends CustomPainter {
     );
   }
 
+  void _drawMarkers(
+    Canvas canvas,
+    double contentLeft,
+    double contentTop,
+    double contentBottom,
+    double minX,
+    double lastX,
+    double xScale,
+  ) {
+    final visibleMarkers = markers
+        .where((m) => m.graphTimeSeconds >= minX && m.graphTimeSeconds <= lastX)
+        .toList(growable: false);
+
+    for (int i = 0; i < visibleMarkers.length; i++) {
+      final marker = visibleMarkers[i];
+      final x = contentLeft + (marker.graphTimeSeconds - minX) * xScale;
+      final color = _markerColor(marker.type);
+
+      final linePaint = Paint()
+        ..color = color
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke;
+
+      canvas.drawLine(
+        Offset(x, contentTop),
+        Offset(x, contentBottom),
+        linePaint,
+      );
+
+      final tagY = contentTop + 4 + (i % 3) * 18;
+      _drawMarkerTag(canvas, Offset(x + 3, tagY), marker.displayLabel, color);
+    }
+  }
+
+  Color _markerColor(String type) {
+    switch (type) {
+      case 'AUDIO_START':
+        return Colors.green.shade700;
+      case 'AUDIO_STOP':
+        return Colors.red.shade700;
+      case 'AUDIO_PAUSE':
+        return Colors.orange.shade700;
+      case 'AUDIO_NEXT':
+        return Colors.blue.shade700;
+      default:
+        return Colors.purple.shade700;
+    }
+  }
+
+  void _drawMarkerTag(Canvas canvas, Offset offset, String text, Color color) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final rect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(offset.dx, offset.dy, tp.width + 8, tp.height + 4),
+      const Radius.circular(4),
+    );
+
+    final bgPaint = Paint()..color = color.withOpacity(0.92);
+    canvas.drawRRect(rect, bgPaint);
+    tp.paint(canvas, Offset(offset.dx + 4, offset.dy + 2));
+  }
+
   static String _fmt(double v) => v.toStringAsFixed(v % 1 == 0 ? 0 : 1);
 
   double? _rms(List<FlSpot> pts) {
     if (pts.isEmpty) return null;
     double sumSq = 0;
     for (final p in pts) {
-      final v = p.y; // raw µV
+      final v = p.y;
       sumSq += v * v;
     }
     return math.sqrt(sumSq / pts.length);
@@ -258,6 +355,7 @@ class _Painter extends CustomPainter {
   bool shouldRepaint(covariant _Painter old) {
     return old.channels != channels ||
         old.timeWindow != timeWindow ||
-        old.fullScaleUv != fullScaleUv;
+        old.fullScaleUv != fullScaleUv ||
+        old.markers != markers;
   }
 }

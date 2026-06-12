@@ -36,6 +36,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   lsl_flutter: ^0.0.6
   fl_chart: ^0.68.0
+  spectrum_lib: ^1.0.1
+  just_audio: ^0.10.5
+  file_picker: ^10.3.3
+  desktop_multi_window: ^0.2.1
 
 dev_dependencies:
   flutter_test:

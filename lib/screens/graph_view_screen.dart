@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import '../models/eeg_data_manager.dart';
+import '../models/stimulus_marker.dart';
 import '../widgets/chart_controls.dart';
 import '../widgets/stacked_eeg_chart.dart';
 
-/// Screen for displaying EEG graphs
 class GraphViewScreen extends StatelessWidget {
   final EEGDataManager dataManager;
   final double timeWindowSeconds;
   final double amplitudeScale;
   final Function(double) onTimeWindowChanged;
   final Function(double) onAmplitudeScaleChanged;
+  final List<StimulusMarker> markers;
 
   const GraphViewScreen({
     super.key,
@@ -18,6 +19,7 @@ class GraphViewScreen extends StatelessWidget {
     required this.amplitudeScale,
     required this.onTimeWindowChanged,
     required this.onAmplitudeScaleChanged,
+    required this.markers,
   });
 
   @override
@@ -45,6 +47,7 @@ class GraphViewScreen extends StatelessWidget {
               channelData: dataManager.allChannelData,
               timeWindowSeconds: timeWindowSeconds,
               fullScaleUv: fullScale,
+              markers: markers,
             ),
           ),
         ),

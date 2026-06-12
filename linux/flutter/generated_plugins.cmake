@@ -3,9 +3,12 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  desktop_multi_window
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
+  jni
+  spectrum_lib
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)
