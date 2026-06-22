@@ -759,15 +759,27 @@ class _EEGViewerState extends State<EEGViewer> {
 
   Future<void> _playCurrentAudio() async {
     if (_audioFiles.isEmpty) return;
+
     if (_currentAudioIndex == -1) {
       setState(() => _currentAudioIndex = 0);
     }
 
+    // Start LabRecorder first.
     await _startLabRecorderRecording();
 
+    // Give LabRecorder time to actually begin writing samples.
+    await Future.delayed(const Duration(milliseconds: 1000));
+
     await _loadCurrentAudio();
+
     final label = _fileName(_audioFiles[_currentAudioIndex]);
+
+    // Send the start marker while LabRecorder is definitely recording.
     await onAudioStartMarker(label);
+
+    // Small delay so the marker enters the stream before audio begins.
+    await Future.delayed(const Duration(milliseconds: 200));
+
     await _audioPlayer.play();
   }
 
@@ -788,8 +800,14 @@ class _EEGViewerState extends State<EEGViewer> {
   Future<void> _stopAudio() async {
     if (_currentAudioIndex >= 0 && _currentAudioIndex < _audioFiles.length) {
       final label = _fileName(_audioFiles[_currentAudioIndex]);
+
       await _audioPlayer.stop();
+
+      // Send AUDIO_STOP marker first.
       await onAudioStopMarker(label);
+
+      // Give LabRecorder time to receive/write the marker before stopping.
+      await Future.delayed(const Duration(milliseconds: 1000));
     } else {
       await _audioPlayer.stop();
     }
@@ -1044,65 +1062,33 @@ class _EEGViewerState extends State<EEGViewer> {
                     const SizedBox(height: 20),
 
                     if (isCompact) ...[
-                      _TopPillTabs(
-                        selectedIndex: _showStimuliPage ? 1 : 0,
-                        onChanged: (i) =>
-                            setState(() => _showStimuliPage = i == 1),
+                      Column(
+                        children: [
+                          _leftColumn(selectedStream),
+                          const SizedBox(height: 16),
+                          _rightColumn(
+                            currentFile: currentFile,
+                            currentDuration: currentDuration,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 22),
-                      _showStimuliPage
-                          ? _stimuliAndMarkersPage(isCompact: true)
-                          : Column(
-                              children: [
-                                _leftColumn(selectedStream),
-                                const SizedBox(height: 16),
-                                _rightColumn(
-                                  currentFile: currentFile,
-                                  currentDuration: currentDuration,
-                                ),
-                              ],
-                            ),
                     ] else ...[
-                      _showStimuliPage
-                          ? Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _TopPillTabs(
-                                  selectedIndex: _showStimuliPage ? 1 : 0,
-                                  onChanged: (i) =>
-                                      setState(() => _showStimuliPage = i == 1),
-                                ),
-                                const SizedBox(height: 22),
-                                _stimuliAndMarkersPage(isCompact: false),
-                              ],
-                            )
-                          : Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                SizedBox(
-                                  width: 380,
-                                  child: Column(
-                                    children: [
-                                      _TopPillTabs(
-                                        selectedIndex: _showStimuliPage ? 1 : 0,
-                                        onChanged: (i) => setState(
-                                          () => _showStimuliPage = i == 1,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 22),
-                                      _leftColumn(selectedStream),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 18),
-                                Expanded(
-                                  child: _rightColumn(
-                                    currentFile: currentFile,
-                                    currentDuration: currentDuration,
-                                  ),
-                                ),
-                              ],
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 380,
+                            child: _leftColumn(selectedStream),
+                          ),
+                          const SizedBox(width: 18),
+                          Expanded(
+                            child: _rightColumn(
+                              currentFile: currentFile,
+                              currentDuration: currentDuration,
                             ),
+                          ),
+                        ],
+                      ),
                     ],
                   ],
                 ),
@@ -1212,58 +1198,6 @@ class _EEGViewerState extends State<EEGViewer> {
         ),
         const SizedBox(height: 16),
         _DashboardCard(
-          title: 'Audio Configuration',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Select or upload audio files for the experiment',
-                style: TextStyle(fontSize: 12, color: Color(0xFF69707D)),
-              ),
-              const SizedBox(height: 16),
-              const Row(
-                children: [
-                  Icon(
-                    Icons.music_note_rounded,
-                    size: 15,
-                    color: Color(0xFF4B5563),
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    'Select Audio File',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              _AudioDropdown(
-                audioFiles: _audioFiles,
-                currentIndex: _currentAudioIndex,
-                fileNameForPath: _fileName,
-                onChanged: (i) => setState(() => _currentAudioIndex = i),
-              ),
-              const SizedBox(height: 12),
-              _DashboardButton(
-                label: 'Upload Custom Audio File',
-                icon: Icons.upload_rounded,
-                onPressed: _pickAudioFiles,
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Checkbox(
-                    value: _loopPlaylist,
-                    visualDensity: VisualDensity.compact,
-                    onChanged: (v) => setState(() => _loopPlaylist = v ?? true),
-                  ),
-                  const Text('Loop playlist', style: TextStyle(fontSize: 12)),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _DashboardCard(
           title: 'Channel Status',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1304,17 +1238,6 @@ class _EEGViewerState extends State<EEGViewer> {
         const SizedBox(height: 16),
         _DashboardCard(
           title: 'Event Timeline',
-          trailing: OutlinedButton.icon(
-            onPressed: () => _recordAndEmitMarker('MANUAL_MARKER', 'Manual'),
-            icon: const Icon(Icons.flag_outlined, size: 13),
-            label: const Text('Add Marker', style: TextStyle(fontSize: 11)),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 30),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              side: const BorderSide(color: Color(0xFFE2E4EA)),
-              foregroundColor: const Color(0xFF6B7280),
-            ),
-          ),
           child: _EventTimeline(markers: _markers),
         ),
       ],
@@ -1429,148 +1352,498 @@ class _EEGViewerState extends State<EEGViewer> {
         const SizedBox(height: 18),
         _DashboardCard(
           title: 'Experiment Controls',
-          subtitle: 'Start, stop, and save your experiment session',
-          child: Column(
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 22),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE9E9ED),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      _fmtDuration(_audioPosition),
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
+          subtitle: 'Audio playback, markers, recording, and session controls',
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final twoColumn = constraints.maxWidth >= 720;
+
+              final audioPanel = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.music_note_rounded,
+                        size: 18,
                         color: Color(0xFF111216),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      currentFile == null
-                          ? 'Session Duration'
-                          : '$currentFile • ${_fmtNullableDuration(currentDuration)}',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF69707D),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${_audioFiles.length} audio file(s) loaded',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF111216),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _DashboardButton(
+                          label: 'Add Files',
+                          icon: Icons.upload_rounded,
+                          onPressed: _pickAudioFiles,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _DashboardButton(
+                          label: 'Clear',
+                          icon: Icons.delete_outline_rounded,
+                          onPressed: _audioFiles.isEmpty
+                              ? null
+                              : _clearAudioFiles,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  if (_audioFiles.isEmpty)
+                    Container(
+                      height: 58,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0F1F4),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        'No audio files selected yet.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF69707D),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      height: 120,
+                      child: ListView.separated(
+                        itemCount: _audioFiles.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final path = _audioFiles[index];
+                          final selected = index == _currentAudioIndex;
+
+                          return _PlaylistTile(
+                            index: index + 1,
+                            title: _fileName(path),
+                            subtitle:
+                                '${_fmtNullableDuration(_audioDurations[path])}   •   ${selected ? 'Selected' : 'Ready'}',
+                            selected: selected,
+                            onTap: () =>
+                                setState(() => _currentAudioIndex = index),
+                          );
+                        },
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              _DashboardButton(
-                label: _audioPlayer.playing
-                    ? 'Pause Experiment'
-                    : _audioPaused
-                    ? 'Resume Experiment'
-                    : 'Start Experiment',
-                icon: _audioPlayer.playing
-                    ? Icons.pause_rounded
-                    : Icons.play_arrow_rounded,
-                dark: true,
-                onPressed: _audioFiles.isEmpty
-                    ? null
-                    : (_audioPlayer.playing
-                          ? _pauseAudio
-                          : (_audioPaused ? _resumeAudio : _playCurrentAudio)),
-              ),
-              const SizedBox(height: 10),
 
-              _DashboardButton(
-                label: 'Open Participant Window',
-                icon: Icons.open_in_new_rounded,
-                onPressed: _openUserWindow,
-              ),
+                  const SizedBox(height: 12),
 
-              const SizedBox(height: 10),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: _DashboardButton(
-                      label: 'Open LabRecorder',
-                      icon: Icons.folder_open_rounded,
-                      onPressed: _openLabRecorder,
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 14,
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _DashboardButton(
-                      label: _labRecorderRecording
-                          ? 'Stop LSL Recording'
-                          : 'Start LSL Recording',
-                      icon: _labRecorderRecording
-                          ? Icons.stop_circle_outlined
-                          : Icons.fiber_manual_record_rounded,
-                      dark: _labRecorderRecording,
-                      onPressed: _labRecorderBusy
-                          ? null
-                          : (_labRecorderRecording
-                                ? _stopLabRecorderRecording
-                                : _startLabRecorderRecording),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE9E9EF),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 10),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: _DashboardButton(
-                      label: 'Save Data',
-                      icon: Icons.save_alt_rounded,
-                      onPressed: () async {
-                        final file = await _saveMarkersCsv();
-
-                        if (!mounted) return;
-
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Saved markers to ${file.path}'),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Now Playing',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF6B6D7C),
+                            fontWeight: FontWeight.w700,
                           ),
-                        );
-                      },
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          currentFile ?? 'No track selected',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            color: Color(0xFF111216),
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _DashboardButton(
-                      label: 'Reset',
-                      icon: Icons.refresh_rounded,
-                      onPressed: () async {
-                        await _stopAudio();
-                        _dataManager.clear();
-                        setState(() {
-                          _latestSample = 'No samples yet';
-                          _markers.clear();
-                          _deltaRaw = 0;
-                          _thetaRaw = 0;
-                          _alphaRaw = 0;
-                          _betaRaw = 0;
-                          _gammaRaw = 0;
-                          _baselineDelta = null;
-                          _baselineTheta = null;
-                          _baselineAlpha = null;
-                          _baselineBeta = null;
-                          _baselineGamma = null;
-                          _audioPosition = Duration.zero;
-                          _stimulusActive = false;
-                        });
-                      },
+
+                  const SizedBox(height: 10),
+
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 9,
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 7,
+                      ),
+                      activeTrackColor: const Color(0xFF090716),
+                      inactiveTrackColor: const Color(0xFFE9E9EF),
+                      thumbColor: Colors.white,
+                      overlayShape: SliderComponentShape.noOverlay,
+                    ),
+                    child: Slider(
+                      value: math.min(
+                        _audioPosition.inMilliseconds.toDouble(),
+                        math
+                            .max(1, currentDuration?.inMilliseconds ?? 1)
+                            .toDouble(),
+                      ),
+                      max: math
+                          .max(1, currentDuration?.inMilliseconds ?? 1)
+                          .toDouble(),
+                      onChanged: currentDuration == null
+                          ? null
+                          : (v) => _audioPlayer.seek(
+                              Duration(milliseconds: v.round()),
+                            ),
+                    ),
+                  ),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _fmtDuration(_audioPosition),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF6B6D7C),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        _fmtNullableDuration(currentDuration) == '--:--'
+                            ? '0:00'
+                            : _fmtNullableDuration(currentDuration),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF6B6D7C),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _TransportButton(
+                        icon: Icons.skip_previous_rounded,
+                        onPressed: _audioFiles.isNotEmpty
+                            ? _previousAudio
+                            : null,
+                      ),
+                      const SizedBox(width: 8),
+                      _TransportButton(
+                        icon: _audioPlayer.playing
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        primary: true,
+                        onPressed: _audioFiles.isNotEmpty
+                            ? (_audioPlayer.playing
+                                  ? _pauseAudio
+                                  : (_audioPaused
+                                        ? _resumeAudio
+                                        : _playCurrentAudio))
+                            : null,
+                      ),
+                      const SizedBox(width: 8),
+                      _TransportButton(
+                        icon: Icons.stop_rounded,
+                        onPressed: (_audioPlayer.playing || _audioPaused)
+                            ? _stopAudio
+                            : null,
+                      ),
+                      const SizedBox(width: 8),
+                      _TransportButton(
+                        icon: Icons.skip_next_rounded,
+                        onPressed: _audioFiles.isNotEmpty ? _nextAudio : null,
+                      ),
+                      const SizedBox(width: 8),
+                      _TransportButton(
+                        icon: Icons.repeat_rounded,
+                        selected: _loopPlaylist,
+                        onPressed: () =>
+                            setState(() => _loopPlaylist = !_loopPlaylist),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.volume_up_outlined,
+                        color: Color(0xFF6B6D7C),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 9,
+                            activeTrackColor: const Color(0xFF090716),
+                            inactiveTrackColor: const Color(0xFFE5E5EA),
+                            thumbColor: Colors.white,
+                            overlayShape: SliderComponentShape.noOverlay,
+                          ),
+                          child: Slider(
+                            value: _audioPlayer.volume,
+                            onChanged: (v) async {
+                              await _audioPlayer.setVolume(v);
+                              if (mounted) setState(() {});
+                              await _sendBandPowerToUserWindow();
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        '${(_audioPlayer.volume * 100).round()}%',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF6B6D7C),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  _DashboardButton(
+                    label: 'Add Experiment Marker',
+                    icon: Icons.flag_outlined,
+                    onPressed: () =>
+                        _recordAndEmitMarker('MANUAL_MARKER', 'Manual'),
+                  ),
+                ],
+              );
+
+              final sessionPanel = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE9E9ED),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          _fmtDuration(_audioPosition),
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 30,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF111216),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          currentFile == null
+                              ? 'Session Duration'
+                              : '$currentFile • ${_fmtNullableDuration(currentDuration)}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF69707D),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  _DashboardButton(
+                    label: _audioPlayer.playing
+                        ? 'Pause Experiment'
+                        : _audioPaused
+                        ? 'Resume Experiment'
+                        : 'Start Experiment',
+                    icon: _audioPlayer.playing
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    dark: true,
+                    onPressed: _audioFiles.isEmpty
+                        ? null
+                        : (_audioPlayer.playing
+                              ? _pauseAudio
+                              : (_audioPaused
+                                    ? _resumeAudio
+                                    : _playCurrentAudio)),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  _DashboardButton(
+                    label: 'Stop Experiment',
+                    icon: Icons.stop_rounded,
+                    onPressed: (_audioPlayer.playing || _audioPaused)
+                        ? _stopAudio
+                        : null,
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  _DashboardButton(
+                    label: 'Open Participant Window',
+                    icon: Icons.open_in_new_rounded,
+                    onPressed: _openUserWindow,
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _DashboardButton(
+                          label: 'Open LabRecorder',
+                          icon: Icons.folder_open_rounded,
+                          onPressed: _openLabRecorder,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _DashboardButton(
+                          label: _labRecorderRecording
+                              ? 'Stop LSL Recording'
+                              : 'Start LSL Recording',
+                          icon: _labRecorderRecording
+                              ? Icons.stop_circle_outlined
+                              : Icons.fiber_manual_record_rounded,
+                          dark: _labRecorderRecording,
+                          onPressed: _labRecorderBusy
+                              ? null
+                              : (_labRecorderRecording
+                                    ? _stopLabRecorderRecording
+                                    : _startLabRecorderRecording),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _DashboardButton(
+                          label: 'Save Data',
+                          icon: Icons.save_alt_rounded,
+                          onPressed: () async {
+                            final file = await _saveMarkersCsv();
+
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Saved markers to ${file.path}'),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _DashboardButton(
+                          label: 'Reset',
+                          icon: Icons.refresh_rounded,
+                          onPressed: () async {
+                            await _stopAudio();
+                            _dataManager.clear();
+                            setState(() {
+                              _latestSample = 'No samples yet';
+                              _markers.clear();
+                              _deltaRaw = 0;
+                              _thetaRaw = 0;
+                              _alphaRaw = 0;
+                              _betaRaw = 0;
+                              _gammaRaw = 0;
+                              _baselineDelta = null;
+                              _baselineTheta = null;
+                              _baselineAlpha = null;
+                              _baselineBeta = null;
+                              _baselineGamma = null;
+                              _audioPosition = Duration.zero;
+                              _stimulusActive = false;
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0F1F4),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'Start Experiment begins audio playback and sends AUDIO_START. Stop Experiment sends AUDIO_STOP before stopping LabRecorder.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF69707D),
+                        height: 1.35,
+                      ),
                     ),
                   ),
                 ],
-              ),
-            ],
+              );
+
+              if (!twoColumn) {
+                return Column(
+                  children: [
+                    audioPanel,
+                    const SizedBox(height: 18),
+                    const Divider(height: 1, color: Color(0xFFE2E4EA)),
+                    const SizedBox(height: 18),
+                    sessionPanel,
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 6, child: audioPanel),
+                  const SizedBox(width: 20),
+                  Container(
+                    width: 1,
+                    height: 430,
+                    color: const Color(0xFFE2E4EA),
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(flex: 5, child: sessionPanel),
+                ],
+              );
+            },
           ),
         ),
       ],
@@ -1579,7 +1852,6 @@ class _EEGViewerState extends State<EEGViewer> {
 
   bool _showRawWaveform = false;
   bool _showBandChart = true;
-  bool _showStimuliPage = false;
 
   void _clearAudioFiles() {
     _audioPlayer.stop();
@@ -2158,13 +2430,6 @@ class _TopPillTabs extends StatelessWidget {
             text: 'Main Dashboard',
             selected: selectedIndex == 0,
             onTap: () => onChanged(0),
-          ),
-        ),
-        Expanded(
-          child: _PillTabButton(
-            text: 'Stimuli & Markers',
-            selected: selectedIndex == 1,
-            onTap: () => onChanged(1),
           ),
         ),
       ],
