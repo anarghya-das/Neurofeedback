@@ -1,0 +1,6 @@
+stream_name,stream_type,marker_index,absolute_time,relative_time_seconds,marker_type,label,marker_value
+AudioMarkers,Markers,0,184061.7791484429,0.03624006695463322,AUDIO_START,excerpt_02.wav,AUDIO_START:excerpt_02.wav
+AudioMarkers,Markers,1,184066.303000556,4.560092180065112,MANUAL_MARKER,Manual,MANUAL_MARKER:Manual
+AudioMarkers,Markers,2,184066.97811679723,5.235208421276184,MANUAL_MARKER,Manual,MANUAL_MARKER:Manual
+AudioMarkers,Markers,3,184067.96225593507,6.219347559119342,MANUAL_MARKER,Manual,MANUAL_MARKER:Manual
+AudioMarkers,Markers,4,184071.76241345392,10.019505077973008,AUDIO_STOP,excerpt_02.wav,AUDIO_STOP:excerpt_02.wav

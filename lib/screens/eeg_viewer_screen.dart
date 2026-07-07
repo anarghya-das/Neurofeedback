@@ -125,6 +125,7 @@ class _EEGViewerState extends State<EEGViewer> {
   @override
   void initState() {
     super.initState();
+    _audioPlayer.setVolume(0.8);
     _setupUserWindowMessageHandler();
     _initializeLSL();
     _initializeMarkers();
@@ -1607,7 +1608,9 @@ class _EEGViewerState extends State<EEGViewer> {
                             overlayShape: SliderComponentShape.noOverlay,
                           ),
                           child: Slider(
-                            value: _audioPlayer.volume,
+                            value: math.min(_audioPlayer.volume, 0.8),
+                            min: 0.0,
+                            max: 0.8,
                             onChanged: (v) async {
                               await _audioPlayer.setVolume(v);
                               if (mounted) setState(() {});
@@ -1618,7 +1621,7 @@ class _EEGViewerState extends State<EEGViewer> {
                       ),
                       const SizedBox(width: 10),
                       Text(
-                        '${(_audioPlayer.volume * 100).round()}%',
+                        '${(math.min(_audioPlayer.volume, 0.8) * 100).round()}%',
                         style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFF6B6D7C),
@@ -2369,7 +2372,7 @@ class _EEGViewerState extends State<EEGViewer> {
       'alpha': _alphaRaw,
       'beta': _betaRaw,
       'gamma': _gammaRaw,
-      'volume': _audioPlayer.volume,
+      'volume': math.min(_audioPlayer.volume, 0.8),
     };
   }
 
@@ -2394,7 +2397,7 @@ class _EEGViewerState extends State<EEGViewer> {
         final data = Map<String, dynamic>.from(call.arguments);
         final volume = (data['volume'] as num).toDouble();
 
-        await _audioPlayer.setVolume(volume.clamp(0.0, 1.0));
+        await _audioPlayer.setVolume(volume.clamp(0.0, 0.8));
 
         if (mounted) {
           setState(() {});
