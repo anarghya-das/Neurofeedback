@@ -16,6 +16,7 @@ import '../services/lsl_service.dart';
 import '../services/lsl_marker_service.dart';
 import '../widgets/band_power_bar_chart.dart';
 import '../widgets/stacked_eeg_chart.dart';
+import '../services/session_logger_service.dart';
 import 'dart:convert';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
@@ -31,6 +32,7 @@ class EEGViewer extends StatefulWidget {
 class _EEGViewerState extends State<EEGViewer> {
   final LSLService _lslService = LSLService();
   final LSLMarkerService _markerService = LSLMarkerService();
+  final SessionLoggerService _sessionLogger = SessionLoggerService();
   final EEGDataManager _dataManager = EEGDataManager();
   final AudioPlayer _audioPlayer = AudioPlayer();
 
@@ -126,6 +128,7 @@ class _EEGViewerState extends State<EEGViewer> {
   void initState() {
     super.initState();
     _audioPlayer.setVolume(0.8);
+    _sessionLogger.startSession();
     _setupUserWindowMessageHandler();
     _initializeLSL();
     _initializeMarkers();
@@ -219,6 +222,11 @@ class _EEGViewerState extends State<EEGViewer> {
 
       await _sendLabRecorderCommand('start');
 
+      await _sessionLogger.logEvent(
+        eventType: 'LABRECORDER_START',
+        message: 'LabRecorder recording started',
+      );
+
       if (!mounted) return;
 
       setState(() {
@@ -241,6 +249,12 @@ class _EEGViewerState extends State<EEGViewer> {
           ),
         ),
       );
+
+      await _sessionLogger.logEvent(
+        eventType: 'ERROR',
+        label: 'LABRECORDER_START',
+        message: '$e',
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -260,6 +274,11 @@ class _EEGViewerState extends State<EEGViewer> {
     try {
       await _sendLabRecorderCommand('stop');
 
+      await _sessionLogger.logEvent(
+        eventType: 'LABRECORDER_STOP',
+        message: 'LabRecorder recording stopped',
+      );
+
       if (!mounted) return;
 
       setState(() {
@@ -278,6 +297,12 @@ class _EEGViewerState extends State<EEGViewer> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to stop LabRecorder: $e')));
+
+      await _sessionLogger.logEvent(
+        eventType: 'ERROR',
+        label: 'LABRECORDER_STOP',
+        message: '$e',
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -285,6 +310,80 @@ class _EEGViewerState extends State<EEGViewer> {
         });
       }
     }
+  }
+
+  Future<File> _exportRawEegCsv() async {
+    final channelSamples = _dataManager.allChannelData.map((channelQueue) {
+      return channelQueue.map((point) {
+        return [point.x.toDouble(), point.y.toDouble()];
+      }).toList();
+    }).toList();
+
+    final file = await _sessionLogger.exportRawEegCsv(
+      channelSamples: channelSamples,
+      samplingRate: _dataManager.samplingRate,
+    );
+
+    return file;
+  }
+
+  Future<void> _openLogViewer() async {
+    final logPath = _sessionLogger.logFile?.path ?? 'No log file created yet.';
+    final entries = _sessionLogger.entries;
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Session Log'),
+        content: SizedBox(
+          width: 760,
+          height: 480,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Log file path:',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              SelectableText(
+                logPath,
+                style: const TextStyle(fontSize: 11, color: Color(0xFF69707D)),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: entries.isEmpty
+                    ? const Center(child: Text('No log entries yet.'))
+                    : ListView.separated(
+                        itemCount: entries.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: SelectableText(
+                              entries[index],
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _initializeMarkers() async {
@@ -375,6 +474,12 @@ class _EEGViewerState extends State<EEGViewer> {
       setState(() {
         _statusText = 'Error searching for streams: $e';
       });
+
+      await _sessionLogger.logEvent(
+        eventType: 'ERROR',
+        label: 'SEARCH_STREAMS',
+        message: '$e',
+      );
     }
   }
 
@@ -590,10 +695,25 @@ class _EEGViewerState extends State<EEGViewer> {
     }
 
     try {
-      await _markerService.sendMarker(markerValue);
+      final lslTimestamp = await _markerService.sendMarker(markerValue);
+
+      await _sessionLogger.logEvent(
+        eventType: type,
+        label: label,
+        message: markerValue,
+        lslTimestamp: lslTimestamp,
+        graphTimeSeconds: marker.graphTimeSeconds,
+      );
 
       developer.log('Successfully emitted LSL marker: $markerValue');
     } catch (e, st) {
+      await _sessionLogger.logEvent(
+        eventType: 'ERROR',
+        label: type,
+        message: 'Failed to emit marker $markerValue: $e',
+        graphTimeSeconds: marker.graphTimeSeconds,
+      );
+
       developer.log(
         'FAILED TO EMIT LSL MARKER: $markerValue',
         error: e,
@@ -936,6 +1056,13 @@ class _EEGViewerState extends State<EEGViewer> {
           _initSpectrumLib(selectedStream.nominalSampleRate.toInt());
         }
 
+        await _sessionLogger.logEvent(
+          eventType: 'STREAM_CONNECT',
+          label: selectedStream.name,
+          message:
+              'Connected to stream ID ${selectedStream.id}, samplingRate=${selectedStream.nominalSampleRate}',
+        );
+
         if (!mounted) return;
         setState(() {
           _statusText =
@@ -946,12 +1073,23 @@ class _EEGViewerState extends State<EEGViewer> {
         setState(() {
           _statusText = 'Failed to connect to stream';
         });
+
+        await _sessionLogger.logEvent(
+          eventType: 'ERROR',
+          label: 'STREAM_CONNECT',
+          message: 'Failed to connect to stream',
+        );
       }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _statusText = 'Error connecting to stream: $e';
       });
+      await _sessionLogger.logEvent(
+        eventType: 'ERROR',
+        label: 'STREAM_CONNECT',
+        message: '$e',
+      );
     }
   }
 
@@ -988,12 +1126,26 @@ class _EEGViewerState extends State<EEGViewer> {
         _statusText = 'Error starting stream: $e';
       });
       developer.log('Error starting stream: $e');
+
+      await _sessionLogger.logEvent(
+        eventType: 'ERROR',
+        label: 'START_STREAMING',
+        message: '$e',
+      );
     }
   }
 
-  void _stopStreaming() {
+  Future<void> _stopStreaming() async {
     _lslService.stopStreaming();
-    _sampleSubscription?.cancel();
+    await _sampleSubscription?.cancel();
+
+    await _sessionLogger.logEvent(
+      eventType: 'STREAM_DISCONNECT',
+      message: 'Stopped streaming',
+    );
+
+    if (!mounted) return;
+
     setState(() {
       _statusText = 'Stopped streaming';
     });
@@ -1794,6 +1946,39 @@ class _EEGViewerState extends State<EEGViewer> {
                               _stimulusActive = false;
                             });
                           },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _DashboardButton(
+                          label: 'Export Raw EEG',
+                          icon: Icons.table_chart_rounded,
+                          onPressed: () async {
+                            final file = await _exportRawEegCsv();
+
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Exported raw EEG to ${file.path}',
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _DashboardButton(
+                          label: 'View Log',
+                          icon: Icons.receipt_long_rounded,
+                          onPressed: _openLogViewer,
                         ),
                       ),
                     ],

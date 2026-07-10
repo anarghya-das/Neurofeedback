@@ -60,7 +60,7 @@ class LSLMarkerService {
     }
   }
 
-  Future<void> sendMarker(String value) async {
+  Future<double> sendMarker(String value) async {
     print('sendMarker called with value=$value');
     developer.log('sendMarker called with value=$value');
 
@@ -74,10 +74,11 @@ class LSLMarkerService {
       print('Pushing AudioMarkers sample: $value');
       developer.log('Pushing AudioMarkers sample: $value');
 
-      final ok = await _worker!.pushSample(
-        streamName,
-        <String>[value],
-      );
+      // Timestamp right before pushing marker.
+      // This is wall-clock seconds. Good enough for your session log column.
+      final timestamp = DateTime.now().microsecondsSinceEpoch / 1000000.0;
+
+      final ok = await _worker!.pushSample(streamName, <String>[value]);
 
       print('AudioMarkers pushSample result: $ok value=$value');
       developer.log('AudioMarkers pushSample result: $ok value=$value');
@@ -88,6 +89,8 @@ class LSLMarkerService {
 
       print('AudioMarkers marker emitted: $value');
       developer.log('AudioMarkers marker emitted: $value');
+
+      return timestamp;
     } catch (e, st) {
       print('FAILED to push AudioMarkers marker: $value error=$e');
 
