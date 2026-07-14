@@ -209,15 +209,7 @@ class _EEGViewerState extends State<EEGViewer> {
     });
 
     try {
-      var result = await Process.run('open', ['-a', 'LabRecorder']);
-
-      if (result.exitCode != 0) {
-        result = await Process.run('open', ['/Applications/LabRecorder.app']);
-      }
-
-      if (result.exitCode != 0) {
-        throw Exception('Could not open LabRecorder: ${result.stderr}');
-      }
+      await _openLabRecorder();
 
       await Future.delayed(const Duration(seconds: 2));
 
