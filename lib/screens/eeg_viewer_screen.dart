@@ -149,36 +149,43 @@ class _EEGViewerState extends State<EEGViewer> {
   }
 
   Future<void> _openLabRecorder() async {
-    try {
-      var result = await Process.run('open', ['-a', 'LabRecorder']);
+  try {
+    ProcessResult result;
+
+    if (Platform.isMacOS) {
+      result = await Process.run('open', ['-a', 'LabRecorder']);
 
       if (result.exitCode != 0) {
         result = await Process.run('open', ['/Applications/LabRecorder.app']);
       }
-
-      if (result.exitCode != 0) {
-        throw Exception(result.stderr.toString());
-      }
-
-      print('LabRecorder opened');
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('LabRecorder opened')));
-    } catch (e) {
-      print('Failed to open LabRecorder: $e');
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Failed to open LabRecorder. Make sure it is in Applications. Error: $e',
-          ),
-        ),
+    } else if (Platform.isWindows) {
+      result = await Process.run(
+        'cmd',
+        ['/c', 'start', '', r'C:\Program Files\LabRecorder\LabRecorder.exe'],
       );
+    } else {
+      throw Exception('Opening LabRecorder is only supported on macOS and Windows.');
     }
+
+    if (result.exitCode != 0) {
+      throw Exception(result.stderr.toString());
+    }
+
+    print('LabRecorder opened');
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('LabRecorder opened')),
+    );
+  } catch (e) {
+    print('Failed to open LabRecorder: $e');
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to open LabRecorder: $e')),
+    );
   }
+}
 
   Future<void> _sendLabRecorderCommand(String command) async {
     final socket = await Socket.connect(
