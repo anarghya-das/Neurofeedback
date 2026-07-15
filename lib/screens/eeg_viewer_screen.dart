@@ -908,20 +908,43 @@ class _EEGViewerState extends State<EEGViewer> {
   }
 
   Future<void> _playAudioOnly() async {
-    if (_audioFiles.isEmpty) return;
+  if (_audioFiles.isEmpty) return;
 
-    if (_currentAudioIndex == -1) {
-      setState(() => _currentAudioIndex = 0);
-    }
+  if (_currentAudioIndex == -1) {
+    setState(() => _currentAudioIndex = 0);
+  }
 
-    final path = _audioFiles[_currentAudioIndex];
+  if (_currentAudioIndex < 0 || _currentAudioIndex >= _audioFiles.length) {
+    return;
+  }
 
-    await _audioPlayer.stop();
-    await _audioPlayer.setFilePath(path);
+  try {
+    await _loadCurrentAudio();
     await _audioPlayer.setVolume(0.8);
     await _audioPlayer.seek(Duration.zero);
     await _audioPlayer.play();
+
+    if (mounted) {
+      setState(() {
+        _audioPaused = false;
+      });
+    }
+  } catch (e, st) {
+    print('Audio-only playback failed: $e');
+
+    developer.log(
+      'Audio-only playback failed',
+      error: e,
+      stackTrace: st,
+    );
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Audio playback failed: $e')),
+    );
   }
+}
 
   Future<void> _resumeAudio() async {
     if (_currentAudioIndex < 0 || _currentAudioIndex >= _audioFiles.length) {
