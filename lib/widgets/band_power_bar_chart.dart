@@ -2,6 +2,8 @@ import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
+import '../models/eeg_app_settings.dart';
+
 class BandPowerBarChart extends StatefulWidget {
   final double delta;
   final double theta;
@@ -14,6 +16,7 @@ class BandPowerBarChart extends StatefulWidget {
   final double? baselineAlpha;
   final double? baselineBeta;
   final double? baselineGamma;
+  final List<EegBandDefinition>? bands;
 
   const BandPowerBarChart({
     super.key,
@@ -27,6 +30,7 @@ class BandPowerBarChart extends StatefulWidget {
     required this.baselineAlpha,
     required this.baselineBeta,
     required this.baselineGamma,
+    this.bands,
   });
 
   @override
@@ -52,11 +56,9 @@ class _BandPowerBarChartState extends State<BandPowerBarChart> {
     return value.toStringAsExponential(2);
   }
 
-  String _formatDelta(double? baseline, double current) {
-    if (baseline == null || baseline <= 0) return 'Δ —';
-    final diff = current - baseline;
-    final sign = diff >= 0 ? '+' : '';
-    return 'Δ $sign${diff.toStringAsFixed(3)}';
+  String _formatRatio(double? baseline, double current) {
+    if (baseline == null || baseline <= 0) return 'Ratio —';
+    return 'Ratio ${(current / baseline).toStringAsFixed(2)}×';
   }
 
   void _toggleBand(int index) {
@@ -115,6 +117,12 @@ class _BandPowerBarChartState extends State<BandPowerBarChart> {
     return '';
   }
 
+  String _formatFrequency(double value) {
+    return value == value.roundToDouble()
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(1);
+  }
+
   @override
   Widget build(BuildContext context) {
     final values = [
@@ -146,13 +154,19 @@ class _BandPowerBarChartState extends State<BandPowerBarChart> {
       const Color(0xFF9A72AE),
     ];
 
-    final labels = <Map<String, String>>[
-      {'band': 'DELTA', 'hz': '0.5–4Hz'},
-      {'band': 'THETA', 'hz': '4–8Hz'},
-      {'band': 'ALPHA', 'hz': '8–13Hz'},
-      {'band': 'BETA', 'hz': '13–32Hz'},
-      {'band': 'GAMMA', 'hz': '32–100Hz'},
-    ];
+    final configuredBands = widget.bands ?? EegAppSettings.defaults().bands;
+    final defaultBands = EegAppSettings.defaults().bands;
+    final labels = List.generate(5, (index) {
+      final definition = index < configuredBands.length
+          ? configuredBands[index]
+          : defaultBands[index];
+      return {
+        'band': definition.name.toUpperCase(),
+        'hz':
+            '${_formatFrequency(definition.lowHz)}–'
+            '${_formatFrequency(definition.highHz)}Hz',
+      };
+    });
 
     return Container(
       decoration: BoxDecoration(
@@ -199,7 +213,7 @@ class _BandPowerBarChartState extends State<BandPowerBarChart> {
                 return BarTooltipItem(
                   '$band\n'
                   '${_formatPower(actualPower)} (uV)²/Hz\n'
-                  '${_formatDelta(baseline, actualPower)}',
+                  '${_formatRatio(baseline, actualPower)}',
                   const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w600,
@@ -245,19 +259,13 @@ class _BandPowerBarChartState extends State<BandPowerBarChart> {
               sideTitles: SideTitles(showTitles: false),
             ),
             leftTitles: AxisTitles(
-              axisNameWidget: const SizedBox(
-                width: 80,
-                child: Center(
-                  child: RotatedBox(
-                    quarterTurns: 1,
-                    child: Text(
-                      'Power — (uV)² / Hz',
-                      style: TextStyle(fontSize: 20, color: Color(0xFF0B1F3A)),
-                    ),
-                  ),
-                ),
+              axisNameWidget: const Text(
+                'Power (µV²/Hz)',
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(fontSize: 13, color: Color(0xFF0B1F3A)),
               ),
-              axisNameSize: 80,
+              axisNameSize: 28,
               sideTitles: SideTitles(
                 showTitles: true,
                 reservedSize: 48,

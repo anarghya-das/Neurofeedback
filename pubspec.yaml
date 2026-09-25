@@ -42,6 +42,7 @@ dependencies:
   media_kit_libs_windows_audio: ^1.0.9
   file_picker: ^10.3.3
   desktop_multi_window: ^0.2.1
+  shared_preferences: ^2.3.2
 
 dev_dependencies:
   flutter_test:

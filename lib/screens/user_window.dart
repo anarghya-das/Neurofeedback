@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
+import '../models/eeg_app_settings.dart';
 import '../widgets/band_power_bar_chart.dart';
 
 class UserWindowApp extends StatelessWidget {
@@ -25,10 +26,7 @@ class UserWindowApp extends StatelessWidget {
 class UserControlWindow extends StatefulWidget {
   final int windowId;
 
-  const UserControlWindow({
-    super.key,
-    required this.windowId,
-  });
+  const UserControlWindow({super.key, required this.windowId});
 
   @override
   State<UserControlWindow> createState() => _UserControlWindowState();
@@ -42,6 +40,12 @@ class _UserControlWindowState extends State<UserControlWindow> {
   double _alpha = 0;
   double _beta = 0;
   double _gamma = 0;
+  double? _baselineDelta;
+  double? _baselineTheta;
+  double? _baselineAlpha;
+  double? _baselineBeta;
+  double? _baselineGamma;
+  List<EegBandDefinition> _bands = EegAppSettings.defaults().bands;
 
   @override
   void initState() {
@@ -59,7 +63,23 @@ class _UserControlWindowState extends State<UserControlWindow> {
           _alpha = (data['alpha'] as num).toDouble();
           _beta = (data['beta'] as num).toDouble();
           _gamma = (data['gamma'] as num).toDouble();
+          _baselineDelta = (data['baselineDelta'] as num?)?.toDouble();
+          _baselineTheta = (data['baselineTheta'] as num?)?.toDouble();
+          _baselineAlpha = (data['baselineAlpha'] as num?)?.toDouble();
+          _baselineBeta = (data['baselineBeta'] as num?)?.toDouble();
+          _baselineGamma = (data['baselineGamma'] as num?)?.toDouble();
           _volume = (data['volume'] as num).toDouble();
+          final rawBands = data['bands'];
+          if (rawBands is List) {
+            _bands = rawBands
+                .whereType<Map>()
+                .map(
+                  (band) => EegBandDefinition.fromJson(
+                    Map<String, dynamic>.from(band),
+                  ),
+                )
+                .toList();
+          }
         });
       }
 
@@ -68,13 +88,7 @@ class _UserControlWindowState extends State<UserControlWindow> {
   }
 
   Future<void> _sendVolumeToMain(double value) async {
-    await DesktopMultiWindow.invokeMethod(
-      0,
-      'setVolume',
-      {
-        'volume': value,
-      },
-    );
+    await DesktopMultiWindow.invokeMethod(0, 'setVolume', {'volume': value});
   }
 
   @override
@@ -182,11 +196,12 @@ class _UserControlWindowState extends State<UserControlWindow> {
                     alpha: _alpha,
                     beta: _beta,
                     gamma: _gamma,
-                    baselineDelta: null,
-                    baselineTheta: null,
-                    baselineAlpha: null,
-                    baselineBeta: null,
-                    baselineGamma: null,
+                    baselineDelta: _baselineDelta,
+                    baselineTheta: _baselineTheta,
+                    baselineAlpha: _baselineAlpha,
+                    baselineBeta: _baselineBeta,
+                    baselineGamma: _baselineGamma,
+                    bands: _bands,
                   ),
                 ),
               ),

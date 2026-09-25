@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../models/eeg_app_settings.dart';
 import '../widgets/band_power_bar_chart.dart';
 
 class BandPowerScreen extends StatelessWidget {
@@ -17,6 +19,7 @@ class BandPowerScreen extends StatelessWidget {
   final bool stimulusActive;
   final String? activeStimulusLabel;
   final DateTime? stimulusStartTime;
+  final List<EegBandDefinition>? bands;
 
   const BandPowerScreen({
     super.key,
@@ -33,29 +36,28 @@ class BandPowerScreen extends StatelessWidget {
     required this.stimulusActive,
     required this.activeStimulusLabel,
     required this.stimulusStartTime,
+    this.bands,
   });
 
-  String _fmtDelta(double? baseline, double current) {
+  String _fmtRatio(double? baseline, double current) {
     if (baseline == null || baseline <= 0) return '—';
-    final diff = current - baseline;
-    final sign = diff >= 0 ? '+' : '';
-    return '$sign${diff.toStringAsFixed(3)}';
+    return '${(current / baseline).toStringAsFixed(2)}×';
   }
 
   Widget _changeChip(String label, double? baseline, double current) {
-    final text = _fmtDelta(baseline, current);
-    final diff = baseline == null ? 0.0 : current - baseline;
+    final text = _fmtRatio(baseline, current);
+    final ratio = baseline == null || baseline <= 0 ? 1.0 : current / baseline;
     final Color bg = baseline == null
         ? Colors.grey.shade200
-        : diff >= 0
-            ? Colors.green.shade100
-            : Colors.red.shade100;
+        : ratio >= 1
+        ? Colors.green.shade100
+        : Colors.red.shade100;
 
     final Color fg = baseline == null
         ? Colors.grey.shade700
-        : diff >= 0
-            ? Colors.green.shade800
-            : Colors.red.shade800;
+        : ratio >= 1
+        ? Colors.green.shade800
+        : Colors.red.shade800;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -86,26 +88,27 @@ class BandPowerScreen extends StatelessWidget {
         children: [
           const Text(
             'Band Power',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-            ),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: stimulusActive ? Colors.blue.shade50 : Colors.grey.shade100,
+              color: stimulusActive
+                  ? Colors.blue.shade50
+                  : Colors.grey.shade100,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: stimulusActive ? Colors.blue.shade200 : Colors.grey.shade300,
+                color: stimulusActive
+                    ? Colors.blue.shade200
+                    : Colors.grey.shade300,
               ),
             ),
             child: Text(
               stimulusActive
                   ? 'Stimulus active: ${activeStimulusLabel ?? "unknown"}'
-                    '${elapsed != null ? " • ${elapsed}s" : ""}'
+                        '${elapsed != null ? " • ${elapsed}s" : ""}'
                   : 'No active stimulus. Press Test Start in the app bar or wire your audio Play button to onAudioStartMarker(...).',
             ),
           ),
@@ -114,11 +117,11 @@ class BandPowerScreen extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _changeChip('Δ Delta', baselineDelta, deltaRaw),
-              _changeChip('Θ Theta', baselineTheta, thetaRaw),
-              _changeChip('Α Alpha', baselineAlpha, alphaRaw),
-              _changeChip('Β Beta', baselineBeta, betaRaw),
-              _changeChip('Γ Gamma', baselineGamma, gammaRaw),
+              _changeChip('δ Delta', baselineDelta, deltaRaw),
+              _changeChip('θ Theta', baselineTheta, thetaRaw),
+              _changeChip('α Alpha', baselineAlpha, alphaRaw),
+              _changeChip('β Beta', baselineBeta, betaRaw),
+              _changeChip('γ Gamma', baselineGamma, gammaRaw),
             ],
           ),
           const SizedBox(height: 10),
@@ -134,6 +137,7 @@ class BandPowerScreen extends StatelessWidget {
               baselineAlpha: baselineAlpha,
               baselineBeta: baselineBeta,
               baselineGamma: baselineGamma,
+              bands: bands,
             ),
           ),
         ],

@@ -17,6 +17,11 @@ import '../services/lsl_marker_service.dart';
 import '../widgets/band_power_bar_chart.dart';
 import '../widgets/stacked_eeg_chart.dart';
 import '../services/session_logger_service.dart';
+import '../models/eeg_app_settings.dart';
+import '../models/live_eeg_analysis.dart';
+import '../services/settings_service.dart';
+import '../widgets/live_analysis_panel.dart';
+import '../utils/configured_band_power.dart';
 import 'dart:convert';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
@@ -35,6 +40,11 @@ class _EEGViewerState extends State<EEGViewer> {
   final SessionLoggerService _sessionLogger = SessionLoggerService();
   final EEGDataManager _dataManager = EEGDataManager();
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final SettingsService _settingsService = SettingsService();
+  final LiveEegAnalysis _liveAnalysis = LiveEegAnalysis();
+
+  EegAppSettings _settings = EegAppSettings.defaults();
+  bool _settingsLoaded = false;
 
   List<StreamInfo> _availableStreams = [];
   String _statusText = 'Ready to search for streams';
@@ -65,12 +75,15 @@ class _EEGViewerState extends State<EEGViewer> {
   bool _stimulusActive = false;
   String? _activeStimulusLabel;
   DateTime? _stimulusStartTime;
+  bool _experimentPreparing = false;
+  bool _baselineAudioStarting = false;
 
   double? _baselineDelta;
   double? _baselineTheta;
   double? _baselineAlpha;
   double? _baselineBeta;
   double? _baselineGamma;
+  int _completedTrialCount = 0;
 
   final List<String> _audioFiles = [];
   final Map<String, Duration?> _audioDurations = {};
@@ -133,6 +146,7 @@ class _EEGViewerState extends State<EEGViewer> {
     _initializeLSL();
     _initializeMarkers();
     _initializeAudio();
+    _loadSettings();
   }
 
   @override
@@ -415,6 +429,28 @@ class _EEGViewerState extends State<EEGViewer> {
     }
   }
 
+  Future<void> _loadSettings() async {
+    final loaded = await _settingsService.loadSettings();
+
+    if (!mounted) return;
+
+    setState(() {
+      _settings = loaded;
+      _settingsLoaded = true;
+      _timeWindowSeconds = loaded.bufferSizeSeconds.clamp(1.0, 60.0);
+    });
+
+    _dataManager.updateSamplingRate(loaded.expectedSamplingRate);
+    _initSpectrumLib(loaded.expectedSamplingRate.toInt());
+    _liveAnalysis.configureBaselineDuration(loaded.baselineDurationSeconds);
+
+    await _sessionLogger.logEvent(
+      eventType: 'CONFIG_LOAD',
+      message:
+          'Loaded settings: streamFilter=${loaded.streamNameFilter}, samplingRate=${loaded.expectedSamplingRate}, channels=${loaded.expectedChannelCount}, buffer=${loaded.bufferSizeSeconds}, baseline=${loaded.baselineDurationSeconds}',
+    );
+  }
+
   void _initializeAudio() {
     _playerStateSubscription = _audioPlayer.playerStateStream.listen((
       state,
@@ -466,11 +502,20 @@ class _EEGViewerState extends State<EEGViewer> {
 
       final streams = await _lslService.searchStreams();
 
+      final filter = _settings.streamNameFilter.trim().toLowerCase();
+
+      final filteredStreams = filter.isEmpty
+          ? streams
+          : streams.where((stream) {
+              return stream.name.toLowerCase().contains(filter);
+            }).toList();
+
       if (!mounted) return;
       setState(() {
-        _availableStreams = streams;
-        _selectedStreamIndex = null;
-        _statusText = 'Found ${_availableStreams.length} stream(s)';
+        _availableStreams = filteredStreams;
+        _statusText = filter.isEmpty
+            ? 'Found ${_availableStreams.length} stream(s)'
+            : 'Found ${_availableStreams.length} stream(s) matching "$filter"';
       });
     } catch (e) {
       if (!mounted) return;
@@ -568,11 +613,13 @@ class _EEGViewerState extends State<EEGViewer> {
 
       if (validChannels.isEmpty) return;
 
-      double deltaSum = 0.0;
-      double thetaSum = 0.0;
-      double alphaSum = 0.0;
-      double betaSum = 0.0;
-      double gammaSum = 0.0;
+      final bandSums = List<double>.filled(5, 0.0);
+      final configuredBands = List.generate(5, (index) {
+        final defaults = EegAppSettings.defaults().bands;
+        return index < _settings.bands.length
+            ? _settings.bands[index]
+            : defaults[index];
+      });
 
       int usedChannels = 0;
 
@@ -592,51 +639,42 @@ class _EEGViewerState extends State<EEGViewer> {
 
         _spectrumLib!.computeSpectrum(processedSamples);
 
-        final waves = _spectrumLib!.readWavesSpectrumInfo();
-
-        // spectrum_lib raw wave values are treated as amplitude spectral density.
-        // Squaring gives power spectral density: µV²/Hz.
-        final deltaPower = math.max(
-          1e-6,
-          math.pow(waves.deltaRaw.toDouble(), 2).toDouble(),
+        final rawSpectrum = _spectrumLib!.readRawSpectrumInfo();
+        final powers = configuredBandPower(
+          amplitudeBins: rawSpectrum.allBinsValues,
+          binsPerHz: _spectrumLib!.getFFTBinsFor1Hz(),
+          bands: configuredBands,
         );
-
-        final thetaPower = math.max(
-          1e-6,
-          math.pow(waves.thetaRaw.toDouble(), 2).toDouble(),
-        );
-
-        final alphaPower = math.max(
-          1e-6,
-          math.pow(waves.alphaRaw.toDouble(), 2).toDouble(),
-        );
-
-        final betaPower = math.max(
-          1e-6,
-          math.pow(waves.betaRaw.toDouble(), 2).toDouble(),
-        );
-
-        final gammaPower = math.max(
-          1e-6,
-          math.pow(waves.gammaRaw.toDouble(), 2).toDouble(),
-        );
-
-        deltaSum += deltaPower;
-        thetaSum += thetaPower;
-        alphaSum += alphaPower;
-        betaSum += betaPower;
-        gammaSum += gammaPower;
+        for (var i = 0; i < bandSums.length; i++) {
+          bandSums[i] += powers[i];
+        }
 
         usedChannels++;
       }
 
       if (usedChannels == 0) return;
 
-      final newDelta = deltaSum / usedChannels;
-      final newTheta = thetaSum / usedChannels;
-      final newAlpha = alphaSum / usedChannels;
-      final newBeta = betaSum / usedChannels;
-      final newGamma = gammaSum / usedChannels;
+      final averagedBands = bandSums.map((sum) => sum / usedChannels).toList();
+      final newDelta = averagedBands[0];
+      final newTheta = averagedBands[1];
+      final newAlpha = averagedBands[2];
+      final newBeta = averagedBands[3];
+      final newGamma = averagedBands[4];
+
+      final baselineWasReady = _liveAnalysis.baselineReady;
+      _liveAnalysis.addFrame(_dataManager.currentTimeSeconds, [
+        newDelta,
+        newTheta,
+        newAlpha,
+        newBeta,
+        newGamma,
+      ]);
+      final fixedBaseline = _liveAnalysis.baseline;
+      if (!baselineWasReady &&
+          _liveAnalysis.baselineReady &&
+          _experimentPreparing) {
+        scheduleMicrotask(_finishBaselineAndStartAudio);
+      }
 
       print(
         'SpectrumLib original PSD-density | '
@@ -670,6 +708,14 @@ class _EEGViewerState extends State<EEGViewer> {
         _gammaRaw = _gammaRaw == 0.0
             ? newGamma
             : _smooth * _gammaRaw + (1 - _smooth) * newGamma;
+
+        if (fixedBaseline != null) {
+          _baselineDelta = fixedBaseline[0];
+          _baselineTheta = fixedBaseline[1];
+          _baselineAlpha = fixedBaseline[2];
+          _baselineBeta = fixedBaseline[3];
+          _baselineGamma = fixedBaseline[4];
+        }
       });
 
       _sendBandPowerToUserWindow();
@@ -734,15 +780,23 @@ class _EEGViewerState extends State<EEGViewer> {
   Future<void> onAudioStartMarker(String label) async {
     if (!mounted) return;
 
+    final durationSeconds =
+        (_currentAudioDuration?.inMilliseconds ?? 2000) / 1000.0;
+    final baselineCaptured = _liveAnalysis.startStimulus(
+      _currentGraphTime(),
+      durationSeconds: durationSeconds,
+    );
+    final baseline = _liveAnalysis.baseline;
+
     setState(() {
       _stimulusActive = true;
       _activeStimulusLabel = label;
       _stimulusStartTime = DateTime.now();
-      _baselineDelta = _deltaRaw;
-      _baselineTheta = _thetaRaw;
-      _baselineAlpha = _alphaRaw;
-      _baselineBeta = _betaRaw;
-      _baselineGamma = _gammaRaw;
+      _baselineDelta = baselineCaptured ? baseline![0] : null;
+      _baselineTheta = baselineCaptured ? baseline![1] : null;
+      _baselineAlpha = baselineCaptured ? baseline![2] : null;
+      _baselineBeta = baselineCaptured ? baseline![3] : null;
+      _baselineGamma = baselineCaptured ? baseline![4] : null;
       _audioPaused = false;
     });
 
@@ -752,9 +806,11 @@ class _EEGViewerState extends State<EEGViewer> {
   Future<void> onAudioStopMarker(String label) async {
     if (!mounted) return;
 
+    _liveAnalysis.stopStimulus(_currentGraphTime());
     setState(() {
       _stimulusActive = false;
       _activeStimulusLabel = label;
+      _completedTrialCount++;
     });
 
     await _recordAndEmitMarker('AUDIO_STOP', label);
@@ -881,6 +937,106 @@ class _EEGViewerState extends State<EEGViewer> {
     }
   }
 
+  String? _validateSettings(EegAppSettings settings) {
+    if (settings.expectedSamplingRate <= 0) {
+      return 'Expected sampling rate must be greater than 0 Hz.';
+    }
+
+    if (settings.expectedChannelCount <= 0) {
+      return 'Expected channel count must be greater than 0.';
+    }
+
+    if (settings.bufferSizeSeconds <= 0) {
+      return 'Buffer size must be greater than 0 seconds.';
+    }
+
+    if (settings.baselineDurationSeconds < 1 ||
+        settings.baselineDurationSeconds > 300) {
+      return 'Baseline period must be between 1 and 300 seconds.';
+    }
+
+    if (settings.bands.isEmpty) {
+      return 'At least one frequency band is required.';
+    }
+
+    final nyquist = settings.expectedSamplingRate / 2.0;
+
+    for (final band in settings.bands) {
+      if (band.name.trim().isEmpty) {
+        return 'Every frequency band needs a name.';
+      }
+
+      if (band.lowHz < 0) {
+        return '${band.name}: low Hz must be 0 or greater.';
+      }
+
+      if (band.highHz <= band.lowHz) {
+        return '${band.name}: high Hz must be greater than low Hz.';
+      }
+
+      if (band.highHz > nyquist) {
+        return '${band.name}: high Hz cannot exceed Nyquist frequency (${nyquist.toStringAsFixed(1)} Hz).';
+      }
+    }
+
+    return null;
+  }
+
+  Future<void> _openConfigurationDialog() async {
+    final updated = await showDialog<EegAppSettings>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ConfigurationDialog(initialSettings: _settings),
+    );
+
+    if (updated == null) return;
+
+    final error = _validateSettings(updated);
+
+    if (error != null) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
+
+      return;
+    }
+
+    await _settingsService.saveSettings(updated);
+
+    if (!mounted) return;
+
+    setState(() {
+      _settings = updated;
+      _timeWindowSeconds = updated.bufferSizeSeconds.clamp(1.0, 60.0);
+    });
+
+    _dataManager.updateSamplingRate(updated.expectedSamplingRate);
+    _initSpectrumLib(updated.expectedSamplingRate.toInt());
+    _liveAnalysis.configureBaselineDuration(updated.baselineDurationSeconds);
+
+    setState(() {
+      _baselineDelta = null;
+      _baselineTheta = null;
+      _baselineAlpha = null;
+      _baselineBeta = null;
+      _baselineGamma = null;
+    });
+
+    await _sessionLogger.logEvent(
+      eventType: 'CONFIG_SAVE',
+      message:
+          'Saved settings: streamFilter=${updated.streamNameFilter}, samplingRate=${updated.expectedSamplingRate}, channels=${updated.expectedChannelCount}, buffer=${updated.bufferSizeSeconds}, baseline=${updated.baselineDurationSeconds}',
+    );
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Configuration saved')));
+  }
+
   Future<void> _playCurrentAudio() async {
     if (_audioFiles.isEmpty) return;
 
@@ -907,44 +1063,117 @@ class _EEGViewerState extends State<EEGViewer> {
     await _audioPlayer.play();
   }
 
-  Future<void> _playAudioOnly() async {
-  if (_audioFiles.isEmpty) return;
+  Future<void> _startExperiment() async {
+    if (!_lslService.isStreaming ||
+        _audioFiles.isEmpty ||
+        _experimentPreparing) {
+      return;
+    }
 
-  if (_currentAudioIndex == -1) {
-    setState(() => _currentAudioIndex = 0);
-  }
+    if (_currentAudioIndex == -1) {
+      setState(() => _currentAudioIndex = 0);
+    }
 
-  if (_currentAudioIndex < 0 || _currentAudioIndex >= _audioFiles.length) {
-    return;
-  }
+    setState(() {
+      _experimentPreparing = true;
+      _baselineAudioStarting = false;
+      _statusText = 'Preparing baseline...';
+      _baselineDelta = null;
+      _baselineTheta = null;
+      _baselineAlpha = null;
+      _baselineBeta = null;
+      _baselineGamma = null;
+    });
 
-  try {
-    await _loadCurrentAudio();
-    await _audioPlayer.setVolume(0.8);
-    await _audioPlayer.seek(Duration.zero);
-    await _audioPlayer.play();
+    try {
+      await _startLabRecorderRecording();
+      await _loadCurrentAudio();
+      _liveAnalysis.configureBaselineDuration(
+        _settings.baselineDurationSeconds,
+      );
+      _liveAnalysis.beginBaseline();
+      await _recordAndEmitMarker('BASELINE_START', 'experiment');
 
-    if (mounted) {
+      if (!mounted) return;
       setState(() {
-        _audioPaused = false;
+        _statusText =
+            'Collecting ${_settings.baselineDurationSeconds.toStringAsFixed(0)} s baseline — audio is paused';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _experimentPreparing = false;
+        _statusText = 'Could not start baseline: $e';
       });
     }
-  } catch (e, st) {
-    print('Audio-only playback failed: $e');
-
-    developer.log(
-      'Audio-only playback failed',
-      error: e,
-      stackTrace: st,
-    );
-
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Audio playback failed: $e')),
-    );
   }
-}
+
+  Future<void> _finishBaselineAndStartAudio() async {
+    if (!_experimentPreparing || _baselineAudioStarting) return;
+    _baselineAudioStarting = true;
+
+    try {
+      await _recordAndEmitMarker('BASELINE_END', 'experiment');
+      if (_currentAudioIndex < 0 || _currentAudioIndex >= _audioFiles.length) {
+        throw StateError('No selected audio file');
+      }
+
+      final label = _fileName(_audioFiles[_currentAudioIndex]);
+      await onAudioStartMarker(label);
+      await Future.delayed(const Duration(milliseconds: 200));
+      await _audioPlayer.seek(Duration.zero);
+      await _audioPlayer.play();
+
+      if (!mounted) return;
+      setState(() {
+        _experimentPreparing = false;
+        _statusText = 'Baseline fixed — playing $label';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _experimentPreparing = false;
+        _statusText = 'Baseline completed, but audio failed to start: $e';
+      });
+    } finally {
+      _baselineAudioStarting = false;
+    }
+  }
+
+  Future<void> _playAudioOnly() async {
+    if (_audioFiles.isEmpty) return;
+
+    if (_currentAudioIndex == -1) {
+      setState(() => _currentAudioIndex = 0);
+    }
+
+    if (_currentAudioIndex < 0 || _currentAudioIndex >= _audioFiles.length) {
+      return;
+    }
+
+    try {
+      await _loadCurrentAudio();
+      await _audioPlayer.setVolume(0.8);
+      await _audioPlayer.seek(Duration.zero);
+      await _audioPlayer.play();
+
+      if (mounted) {
+        setState(() {
+          _audioPaused = false;
+        });
+      }
+    } catch (e, st) {
+      print('Audio-only playback failed: $e');
+
+      developer.log('Audio-only playback failed', error: e, stackTrace: st);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Audio playback failed: $e')));
+    }
+  }
 
   Future<void> _resumeAudio() async {
     if (_currentAudioIndex < 0 || _currentAudioIndex >= _audioFiles.length) {
@@ -961,6 +1190,23 @@ class _EEGViewerState extends State<EEGViewer> {
   }
 
   Future<void> _stopAudio() async {
+    if (_experimentPreparing) {
+      _experimentPreparing = false;
+      _baselineAudioStarting = false;
+      _liveAnalysis.configureBaselineDuration(
+        _settings.baselineDurationSeconds,
+      );
+      await _recordAndEmitMarker('BASELINE_CANCEL', 'experiment');
+      await _audioPlayer.stop();
+      await _stopLabRecorderRecording();
+      if (mounted) {
+        setState(() {
+          _statusText = 'Experiment cancelled during baseline';
+        });
+      }
+      return;
+    }
+
     if (_currentAudioIndex >= 0 && _currentAudioIndex < _audioFiles.length) {
       final label = _fileName(_audioFiles[_currentAudioIndex]);
 
@@ -1093,6 +1339,28 @@ class _EEGViewerState extends State<EEGViewer> {
       final connected = await _lslService.connectToStream(selectedStream);
 
       if (connected) {
+        final actualRate = selectedStream.nominalSampleRate;
+        final expectedRate = _settings.expectedSamplingRate;
+
+        if (actualRate > 0 && (actualRate - expectedRate).abs() > 0.1) {
+          await _sessionLogger.logEvent(
+            eventType: 'CONFIG_WARNING',
+            label: selectedStream.name,
+            message:
+                'Expected sampling rate $expectedRate Hz but stream reports $actualRate Hz',
+          );
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Warning: expected $expectedRate Hz, but stream reports $actualRate Hz.',
+                ),
+              ),
+            );
+          }
+        }
+
         if (selectedStream.nominalSampleRate > 0) {
           _dataManager.updateSamplingRate(selectedStream.nominalSampleRate);
           _initSpectrumLib(selectedStream.nominalSampleRate.toInt());
@@ -1143,6 +1411,19 @@ class _EEGViewerState extends State<EEGViewer> {
       }
 
       await _sampleSubscription?.cancel();
+
+      _liveAnalysis.configureBaselineDuration(
+        _settings.baselineDurationSeconds,
+      );
+      if (mounted) {
+        setState(() {
+          _baselineDelta = null;
+          _baselineTheta = null;
+          _baselineAlpha = null;
+          _baselineBeta = null;
+          _baselineGamma = null;
+        });
+      }
 
       final stream = await _lslService.startStreaming();
 
@@ -1321,6 +1602,12 @@ class _EEGViewerState extends State<EEGViewer> {
                 style: TextStyle(fontSize: 12, color: Color(0xFF69707D)),
               ),
               const SizedBox(height: 16),
+              _DashboardButton(
+                label: 'Configuration',
+                icon: Icons.tune_rounded,
+                onPressed: _openConfigurationDialog,
+              ),
+              const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -1443,6 +1730,10 @@ class _EEGViewerState extends State<EEGViewer> {
     required String? currentFile,
     required Duration? currentDuration,
   }) {
+    final eegReady = _lslService.isStreaming;
+    final audioReady = _audioFiles.isNotEmpty && currentFile != null;
+    final canStartExperiment = eegReady && audioReady && !_experimentPreparing;
+
     return Column(
       children: [
         Center(
@@ -1518,6 +1809,7 @@ class _EEGViewerState extends State<EEGViewer> {
                               baselineAlpha: _baselineAlpha,
                               baselineBeta: _baselineBeta,
                               baselineGamma: _baselineGamma,
+                              bands: _settings.bands,
                             )
                           : Container(
                               key: const ValueKey('band-chart-hidden'),
@@ -1542,6 +1834,24 @@ class _EEGViewerState extends State<EEGViewer> {
                             ),
                     ),
                   ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        _DashboardCard(
+          title: 'Baseline-normalized Band Analysis',
+          subtitle:
+              'Normalized PSD = current power / first configured baseline period',
+          child: LiveAnalysisPanel(
+            analysis: _liveAnalysis,
+            currentPower: [
+              _deltaRaw,
+              _thetaRaw,
+              _alphaRaw,
+              _betaRaw,
+              _gammaRaw,
+            ],
+            graphTimeSeconds: _currentGraphTime(),
+            completedTrialCount: _completedTrialCount,
           ),
         ),
         const SizedBox(height: 18),
@@ -1874,8 +2184,34 @@ class _EEGViewerState extends State<EEGViewer> {
 
                   const SizedBox(height: 14),
 
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7F7F8),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFE2E4EA)),
+                    ),
+                    child: Column(
+                      children: [
+                        _ExperimentRequirement(
+                          ready: eegReady,
+                          label: 'EEG connected and streaming over LSL',
+                        ),
+                        const SizedBox(height: 8),
+                        _ExperimentRequirement(
+                          ready: audioReady,
+                          label: 'Audio file selected',
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
                   _DashboardButton(
-                    label: _audioPlayer.playing
+                    label: _experimentPreparing
+                        ? 'Collecting Baseline...'
+                        : _audioPlayer.playing
                         ? 'Pause Experiment'
                         : _audioPaused
                         ? 'Resume Experiment'
@@ -1884,13 +2220,15 @@ class _EEGViewerState extends State<EEGViewer> {
                         ? Icons.pause_rounded
                         : Icons.play_arrow_rounded,
                     dark: true,
-                    onPressed: _audioFiles.isEmpty
+                    onPressed: _experimentPreparing
                         ? null
                         : (_audioPlayer.playing
                               ? _pauseAudio
                               : (_audioPaused
                                     ? _resumeAudio
-                                    : _playCurrentAudio)),
+                                    : (canStartExperiment
+                                          ? _startExperiment
+                                          : null))),
                   ),
 
                   const SizedBox(height: 10),
@@ -1898,7 +2236,10 @@ class _EEGViewerState extends State<EEGViewer> {
                   _DashboardButton(
                     label: 'Stop Experiment',
                     icon: Icons.stop_rounded,
-                    onPressed: (_audioPlayer.playing || _audioPaused)
+                    onPressed:
+                        (_audioPlayer.playing ||
+                            _audioPaused ||
+                            _experimentPreparing)
                         ? _stopAudio
                         : null,
                   ),
@@ -1971,6 +2312,9 @@ class _EEGViewerState extends State<EEGViewer> {
                           onPressed: () async {
                             await _stopAudio();
                             _dataManager.clear();
+                            _liveAnalysis.configureBaselineDuration(
+                              _settings.baselineDurationSeconds,
+                            );
                             setState(() {
                               _latestSample = 'No samples yet';
                               _markers.clear();
@@ -2036,7 +2380,7 @@ class _EEGViewerState extends State<EEGViewer> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: const Text(
-                      'Start Experiment begins audio playback and sends AUDIO_START. Stop Experiment sends AUDIO_STOP before stopping LabRecorder.',
+                      'Start Experiment collects the configured silent baseline first. Audio starts automatically when the baseline is fixed.',
                       style: TextStyle(
                         fontSize: 11,
                         color: Color(0xFF69707D),
@@ -2599,7 +2943,13 @@ class _EEGViewerState extends State<EEGViewer> {
       'alpha': _alphaRaw,
       'beta': _betaRaw,
       'gamma': _gammaRaw,
+      'baselineDelta': _baselineDelta,
+      'baselineTheta': _baselineTheta,
+      'baselineAlpha': _baselineAlpha,
+      'baselineBeta': _baselineBeta,
+      'baselineGamma': _baselineGamma,
       'volume': math.min(_audioPlayer.volume, 0.8),
+      'bands': _settings.bands.map((band) => band.toJson()).toList(),
     };
   }
 
@@ -2635,6 +2985,466 @@ class _EEGViewerState extends State<EEGViewer> {
 
       return null;
     });
+  }
+}
+
+class _ConfigurationDialog extends StatefulWidget {
+  const _ConfigurationDialog({required this.initialSettings});
+
+  final EegAppSettings initialSettings;
+
+  @override
+  State<_ConfigurationDialog> createState() => _ConfigurationDialogState();
+}
+
+class _ConfigurationDialogState extends State<_ConfigurationDialog> {
+  late final TextEditingController _streamFilterController;
+  late final TextEditingController _samplingRateController;
+  late final TextEditingController _channelCountController;
+  late final TextEditingController _bufferSizeController;
+  late final TextEditingController _baselineDurationController;
+
+  late List<_BandControllers> _bandControllers;
+
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _streamFilterController = TextEditingController(
+      text: widget.initialSettings.streamNameFilter,
+    );
+
+    _samplingRateController = TextEditingController(
+      text: widget.initialSettings.expectedSamplingRate.toStringAsFixed(0),
+    );
+
+    _channelCountController = TextEditingController(
+      text: widget.initialSettings.expectedChannelCount.toString(),
+    );
+
+    _bufferSizeController = TextEditingController(
+      text: widget.initialSettings.bufferSizeSeconds.toStringAsFixed(0),
+    );
+
+    _baselineDurationController = TextEditingController(
+      text: widget.initialSettings.baselineDurationSeconds.toStringAsFixed(0),
+    );
+
+    _bandControllers = widget.initialSettings.bands.map((band) {
+      return _BandControllers(
+        name: TextEditingController(text: band.name),
+        low: TextEditingController(text: band.lowHz.toString()),
+        high: TextEditingController(text: band.highHz.toString()),
+      );
+    }).toList();
+  }
+
+  @override
+  void dispose() {
+    _streamFilterController.dispose();
+    _samplingRateController.dispose();
+    _channelCountController.dispose();
+    _bufferSizeController.dispose();
+    _baselineDurationController.dispose();
+
+    for (final band in _bandControllers) {
+      band.dispose();
+    }
+
+    super.dispose();
+  }
+
+  EegAppSettings? _buildSettingsOrShowError() {
+    final samplingRate = double.tryParse(_samplingRateController.text.trim());
+    final channelCount = int.tryParse(_channelCountController.text.trim());
+    final bufferSize = double.tryParse(_bufferSizeController.text.trim());
+    final baselineDuration = double.tryParse(
+      _baselineDurationController.text.trim(),
+    );
+
+    if (samplingRate == null || samplingRate <= 0) {
+      setState(() {
+        _errorText = 'Expected sampling rate must be a number greater than 0.';
+      });
+      return null;
+    }
+
+    if (channelCount == null || channelCount <= 0) {
+      setState(() {
+        _errorText =
+            'Expected channel count must be a whole number greater than 0.';
+      });
+      return null;
+    }
+
+    if (bufferSize == null || bufferSize <= 0) {
+      setState(() {
+        _errorText = 'Buffer size must be a number greater than 0 seconds.';
+      });
+      return null;
+    }
+
+    if (baselineDuration == null ||
+        baselineDuration < 1 ||
+        baselineDuration > 300) {
+      setState(() {
+        _errorText = 'Baseline period must be between 1 and 300 seconds.';
+      });
+      return null;
+    }
+
+    final bands = <EegBandDefinition>[];
+
+    for (final band in _bandControllers) {
+      final name = band.name.text.trim();
+      final low = double.tryParse(band.low.text.trim());
+      final high = double.tryParse(band.high.text.trim());
+
+      if (name.isEmpty) {
+        setState(() {
+          _errorText = 'Every band must have a name.';
+        });
+        return null;
+      }
+
+      if (low == null || low < 0) {
+        setState(() {
+          _errorText = '$name: low Hz must be 0 or greater.';
+        });
+        return null;
+      }
+
+      if (high == null || high <= low) {
+        setState(() {
+          _errorText = '$name: high Hz must be greater than low Hz.';
+        });
+        return null;
+      }
+
+      final nyquist = samplingRate / 2.0;
+
+      if (high > nyquist) {
+        setState(() {
+          _errorText =
+              '$name: high Hz cannot exceed Nyquist frequency (${nyquist.toStringAsFixed(1)} Hz).';
+        });
+        return null;
+      }
+
+      bands.add(EegBandDefinition(name: name, lowHz: low, highHz: high));
+    }
+
+    if (bands.isEmpty) {
+      setState(() {
+        _errorText = 'At least one frequency band is required.';
+      });
+      return null;
+    }
+
+    setState(() {
+      _errorText = null;
+    });
+
+    return EegAppSettings(
+      streamNameFilter: _streamFilterController.text.trim(),
+      expectedSamplingRate: samplingRate,
+      expectedChannelCount: channelCount,
+      bufferSizeSeconds: bufferSize,
+      baselineDurationSeconds: baselineDuration,
+      bands: bands,
+    );
+  }
+
+  void _addBand() {
+    setState(() {
+      _bandControllers.add(
+        _BandControllers(
+          name: TextEditingController(),
+          low: TextEditingController(),
+          high: TextEditingController(),
+        ),
+      );
+    });
+  }
+
+  void _resetDefaults() {
+    final defaults = EegAppSettings.defaults();
+
+    setState(() {
+      _streamFilterController.text = defaults.streamNameFilter;
+      _samplingRateController.text = defaults.expectedSamplingRate
+          .toStringAsFixed(0);
+      _channelCountController.text = defaults.expectedChannelCount.toString();
+      _bufferSizeController.text = defaults.bufferSizeSeconds.toStringAsFixed(
+        0,
+      );
+      _baselineDurationController.text = defaults.baselineDurationSeconds
+          .toStringAsFixed(0);
+
+      for (final band in _bandControllers) {
+        band.dispose();
+      }
+
+      _bandControllers = defaults.bands.map((band) {
+        return _BandControllers(
+          name: TextEditingController(text: band.name),
+          low: TextEditingController(text: band.lowHz.toString()),
+          high: TextEditingController(text: band.highHz.toString()),
+        );
+      }).toList();
+
+      _errorText = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Session Configuration'),
+      content: SizedBox(
+        width: 760,
+        height: 620,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_errorText != null) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFE4E6),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFB7185)),
+                ),
+                child: Text(
+                  _errorText!,
+                  style: const TextStyle(
+                    color: Color(0xFF9F1239),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            Row(
+              children: [
+                Expanded(
+                  child: _ConfigTextField(
+                    controller: _streamFilterController,
+                    label: 'LSL Stream Name Filter',
+                    hint: 'Example: obci_eeg',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _ConfigTextField(
+                    controller: _samplingRateController,
+                    label: 'Expected Sampling Rate',
+                    hint: '256',
+                    keyboardType: TextInputType.number,
+                    suffix: 'Hz',
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _ConfigTextField(
+                    controller: _channelCountController,
+                    label: 'Expected Channel Count',
+                    hint: '8',
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _ConfigTextField(
+                    controller: _bufferSizeController,
+                    label: 'Buffer Size',
+                    hint: '10',
+                    keyboardType: TextInputType.number,
+                    suffix: 'sec',
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            _ConfigTextField(
+              controller: _baselineDurationController,
+              label: 'Baseline Period',
+              hint: '15',
+              keyboardType: TextInputType.number,
+              suffix: 'sec',
+            ),
+
+            const SizedBox(height: 18),
+
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Frequency Bands',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+                ),
+                TextButton.icon(
+                  onPressed: _addBand,
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Add Band'),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 8),
+
+            Expanded(
+              child: ListView.separated(
+                itemCount: _bandControllers.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final band = _bandControllers[index];
+
+                  return Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7F7F8),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFE2E4EA)),
+                    ),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 150,
+                          child: _ConfigTextField(
+                            controller: band.name,
+                            label: 'Name',
+                            hint: 'Alpha',
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _ConfigTextField(
+                            controller: band.low,
+                            label: 'Low',
+                            hint: '8',
+                            keyboardType: TextInputType.number,
+                            suffix: 'Hz',
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _ConfigTextField(
+                            controller: band.high,
+                            label: 'High',
+                            hint: '13',
+                            keyboardType: TextInputType.number,
+                            suffix: 'Hz',
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          tooltip: 'Remove band',
+                          onPressed: _bandControllers.length <= 1
+                              ? null
+                              : () {
+                                  setState(() {
+                                    final removed = _bandControllers.removeAt(
+                                      index,
+                                    );
+                                    removed.dispose();
+                                  });
+                                },
+                          icon: const Icon(Icons.delete_outline_rounded),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            const Text(
+              'Defaults are configured for a standard 256 Hz, 8-channel EEG setup.',
+              style: TextStyle(fontSize: 12, color: Color(0xFF69707D)),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _resetDefaults,
+          child: const Text('Reset Defaults'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final settings = _buildSettingsOrShowError();
+            if (settings == null) return;
+            Navigator.pop(context, settings);
+          },
+          child: const Text('Save Configuration'),
+        ),
+      ],
+    );
+  }
+}
+
+class _BandControllers {
+  _BandControllers({required this.name, required this.low, required this.high});
+
+  final TextEditingController name;
+  final TextEditingController low;
+  final TextEditingController high;
+
+  void dispose() {
+    name.dispose();
+    low.dispose();
+    high.dispose();
+  }
+}
+
+class _ConfigTextField extends StatelessWidget {
+  const _ConfigTextField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    this.keyboardType,
+    this.suffix,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final TextInputType? keyboardType;
+  final String? suffix;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        suffixText: suffix,
+        isDense: true,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
   }
 }
 
@@ -3064,6 +3874,37 @@ class _MiniDarkBadge extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _ExperimentRequirement extends StatelessWidget {
+  const _ExperimentRequirement({required this.ready, required this.label});
+
+  final bool ready;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          ready ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+          size: 18,
+          color: ready ? const Color(0xFF15803D) : const Color(0xFF9CA3AF),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: ready ? const Color(0xFF166534) : const Color(0xFF69707D),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _DashboardButton extends StatelessWidget {
