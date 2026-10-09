@@ -112,3 +112,55 @@ class LslEegOutlet {
     _timestamps = malloc<Double>(_capacity);
   }
 }
+
+/// An irregular-rate string outlet for event markers, which LabRecorder records
+/// next to the EEG.
+class LslMarkerOutlet {
+  LslMarkerOutlet._(this._outlet);
+
+  final lsl_outlet _outlet;
+  bool _closed = false;
+
+  static LslMarkerOutlet create({
+    required String name,
+    required String sourceId,
+    Map<String, String> extraDesc = const {},
+  }) {
+    return using((arena) {
+      Pointer<Char> s(String v) => v.toNativeUtf8(allocator: arena).cast();
+      final info = lslBindings.lsl_create_streaminfo(
+        s(name),
+        s('Markers'),
+        1,
+        0, // irregular rate
+        lsl_channel_format_t.cft_string,
+        s(sourceId),
+      );
+      final desc = lslBindings.lsl_get_desc(info);
+      for (final entry in extraDesc.entries) {
+        lslBindings.lsl_append_child_value(desc, s(entry.key), s(entry.value));
+      }
+      final outlet = lslBindings.lsl_create_outlet(info, 0, 360);
+      lslBindings.lsl_destroy_streaminfo(info);
+      if (outlet == nullptr) {
+        throw StateError('liblsl could not create outlet "$name"');
+      }
+      return LslMarkerOutlet._(outlet);
+    });
+  }
+
+  void push(String marker, double timestamp) {
+    if (_closed) return;
+    using((arena) {
+      final sample = arena<Pointer<Char>>();
+      sample.value = marker.toNativeUtf8(allocator: arena).cast();
+      lslBindings.lsl_push_sample_strt(_outlet, sample, timestamp);
+    });
+  }
+
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    lslBindings.lsl_destroy_outlet(_outlet);
+  }
+}

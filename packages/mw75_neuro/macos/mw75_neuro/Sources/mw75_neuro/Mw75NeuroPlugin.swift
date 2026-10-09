@@ -26,6 +26,8 @@ public class Mw75NeuroPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   private var eventSink: FlutterEventSink?
   /// Created on first use: making a CBCentralManager is what asks for Bluetooth access.
   private lazy var ble = BleLink(emit: { [weak self] event in self?.eventSink?(event) })
+  private let tones = ToneStimulator()
+  private lazy var speaker = CueSpeaker()
   private var commandLink: RfcommLink?
   private var dataLink: RfcommLink?
   private var pendingOpen: PendingOpen?
@@ -96,6 +98,32 @@ public class Mw75NeuroPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         result: result)
     case "bleDisconnect":
       ble.disconnect()
+      result(nil)
+    case "audioOutputs":
+      result(ToneStimulator.outputDevices())
+    case "audioStart":
+      do {
+        result(try tones.start(deviceId: args["deviceId"] as? Int))
+      } catch {
+        result(FlutterError(code: "audio_failed", message: error.localizedDescription, details: nil))
+      }
+    case "audioPlay":
+      guard let frequency = args["frequency"] as? Double, let duration = args["duration"] as? Double,
+        let amplitude = args["amplitude"] as? Double
+      else {
+        result(FlutterError(code: "bad_args", message: "audioPlay needs frequency, duration, amplitude", details: nil))
+        return
+      }
+      do {
+        result(try tones.play(frequency: frequency, duration: duration, amplitude: amplitude, at: args["at"] as? Double))
+      } catch {
+        result(FlutterError(code: "audio_failed", message: error.localizedDescription, details: nil))
+      }
+    case "audioStop":
+      tones.stop()
+      result(nil)
+    case "speak":
+      if let text = args["text"] as? String { speaker.speak(text) } else { speaker.stop() }
       result(nil)
     default:
       result(FlutterMethodNotImplemented)

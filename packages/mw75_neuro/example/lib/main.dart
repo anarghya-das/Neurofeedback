@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -42,6 +43,11 @@ class BenchPage extends StatefulWidget {
 class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMixin {
   final headset = Mw75Headset();
   final metrics = Mw75MetricSession();
+  late final oddball = OddballSession(headset: headset, store: _store);
+  late final alpha = AlphaSession(headset: headset, store: _store);
+
+  /// Finished test runs: one folder each, with results and the raw EEG.
+  static final _store = TestRunStore(Directory('${Platform.environment['HOME']}/Documents/MW75 Tests'));
   final plot = _PlotBuffer(seconds: _EegPainter.window);
   StreamSubscription<List<Mw75Sample>>? _samples;
   Timer? _consoleStatus;
@@ -52,7 +58,10 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
 
   /// Drives the live plot: one repaint per screen refresh while streaming.
   late final AnimationController _frames = AnimationController(vsync: this, duration: const Duration(seconds: 1));
-  _BandSource _bandSource = const _BandSource.all();
+  _ChannelSet _bandSource = const _ChannelSet.all();
+  _ChannelSet _erpSource = const _ChannelSet.all();
+  _ChannelSet _alphaSource = const _ChannelSet.all();
+  _View _view = _View.live;
   Timer? _bandTimer;
   HeadsetState? _lastState;
 
@@ -75,6 +84,25 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
           'records=${metrics.records}',
         );
       }
+      if (oddball.busy) {
+        final s = oddball.summary(_erpSource.channels);
+        String p(WindowTest? t) => t == null ? '-' : '${t.effect.toStringAsFixed(2)}uV p=${t.p.toStringAsFixed(3)}';
+        debugPrint(
+          '[bench] oddball ${oddball.state.name} tone ${oddball.trialsPlayed}/${oddball.plannedTrials} '
+          'epochs std=${s.standardCount} rare=${s.rareCount} artifacts=${s.artifactCount} '
+          'unusable=${oddball.rejections.map((k, v) => MapEntry(k.name, v))} '
+          'N1 ${p(s.response)} P300 ${p(s.oddball)} latency=${oddball.outputInfo?.latency.toStringAsFixed(3)}',
+        );
+      }
+      if (alpha.busy) {
+        final s = alpha.summary(_alphaSource.channels);
+        debugPrint(
+          '[bench] alpha ${alpha.state.name} block ${alpha.blockNumber}/${alpha.blockCount} '
+          'eyes=${alpha.eyesClosedNow == true ? 'closed' : 'open'} windows=${alpha.current?.timeline.length} '
+          'blocks open=${s.openBlocks} closed=${s.closedBlocks} ratio=${s.ratio?.toStringAsFixed(2)} '
+          'p=${s.p?.toStringAsFixed(4)} peak=${s.peakHz?.toStringAsFixed(1)}Hz',
+        );
+      }
       if (headset.state == HeadsetState.idle) return;
       debugPrint(
         '[bench] ${headset.state.name} rate=${headset.packetRate.toStringAsFixed(0)}/s '
@@ -94,6 +122,9 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   Future<void> _boot() async {
     if (_autostart) debugPrint('[bench] listing paired devices…');
     await headset.refreshDevices();
+    await oddball.refreshOutputs();
+    await oddball.loadSaved();
+    await alpha.loadSaved();
     if (!_autostart) return;
     debugPrint('[bench] devices: ${headset.devices}');
     await headset.start();
@@ -124,7 +155,10 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
 
   void _updateBands() {
     if (headset.state != HeadsetState.streaming || !mounted) return;
-    final p = bands.compute(sampleRate: headset.effectiveRate ?? Mw75Protocol.samplingRate, channels: _bandSource.channels);
+    final p = bands.compute(
+      sampleRate: headset.effectiveRate ?? Mw75Protocol.samplingRate,
+      channels: _bandSource.channels,
+    );
     if (p == null) return;
     _bandPowers.value = p;
   }
@@ -137,6 +171,8 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
     _frames.dispose();
     _bandPowers.dispose();
     _consoleStatus?.cancel();
+    oddball.dispose();
+    alpha.dispose();
     headset.dispose();
     metrics.dispose();
     _streamName.dispose();
@@ -161,8 +197,10 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                   ListenableBuilder(
                     listenable: Listenable.merge([headset, metrics]),
                     builder: (context, _) {
-                      final rawActive = headset.state == HeadsetState.starting || headset.state == HeadsetState.streaming;
-                      final focusActive = metrics.state == MetricState.connecting || metrics.state == MetricState.running;
+                      final rawActive =
+                          headset.state == HeadsetState.starting || headset.state == HeadsetState.streaming;
+                      final focusActive =
+                          metrics.state == MetricState.connecting || metrics.state == MetricState.running;
                       return Column(
                         children: [
                           _Card(
@@ -190,50 +228,42 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                     },
                   ),
                   const SizedBox(height: 14),
-                  _Card(title: 'Stream', child: _StreamSettings(headset: headset, name: _streamName)),
+                  _Card(
+                    title: 'Stream',
+                    child: _StreamSettings(headset: headset, name: _streamName),
+                  ),
                 ],
               ),
             ),
             const SizedBox(width: 18),
             Expanded(
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    flex: 3,
-                    child: _Card(
-                      title: 'Live EEG',
-                      trailing: const Text('Last 4 s, drawn 0.35 s behind live, offset removed', style: TextStyle(fontSize: 11, color: _muted)),
-                      child: Expanded(
-                        child: RepaintBoundary(
-                          child: CustomPaint(painter: _EegPainter(plot, repaint: _frames), size: Size.infinite),
-                        ),
-                      ),
+                  SegmentedButton<_View>(
+                    showSelectedIcon: false,
+                    style: SegmentedButton.styleFrom(
+                      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                      visualDensity: VisualDensity.compact,
+                      backgroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
+                    segments: const [
+                      ButtonSegment(value: _View.live, label: Text('Live signals')),
+                      ButtonSegment(value: _View.oddball, label: Text('Auditory oddball')),
+                      ButtonSegment(value: _View.alpha, label: Text('Eyes-closed alpha')),
+                    ],
+                    selected: {_view},
+                    onSelectionChanged: (v) => setState(() => _view = v.first),
                   ),
                   const SizedBox(height: 14),
                   Expanded(
-                    flex: 2,
-                    child: _Card(
-                      title: 'Band power',
-                      trailing: _BandSourcePicker(
-                        value: _bandSource,
-                        onChanged: (v) => setState(() {
-                          _bandSource = v;
-                          _bandPowers.value = null;
-                        }),
-                      ),
-                      child: Expanded(
-                        child: ListenableBuilder(
-                          listenable: Listenable.merge([headset, _bandPowers]),
-                          builder: (context, _) => _BandPowerView(
-                            powers: headset.state == HeadsetState.streaming ? _bandPowers.value : null,
-                          ),
-                        ),
-                      ),
-                    ),
+                    child: switch (_view) {
+                      _View.live => _liveView(),
+                      _View.oddball => _oddballView(),
+                      _View.alpha => _alphaView(),
+                    },
                   ),
-                  const SizedBox(height: 14),
-                  Expanded(flex: 2, child: _Card(title: 'Command log', child: Expanded(child: _Log(headset: headset, metrics: metrics)))),
                 ],
               ),
             ),
@@ -242,7 +272,192 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
       ),
     );
   }
+
+  Widget _liveView() => Column(
+    children: [
+      Expanded(
+        flex: 3,
+        child: _Card(
+          title: 'Live EEG',
+          trailing: const Text(
+            'Last 4 s, drawn 0.35 s behind live, offset removed',
+            style: TextStyle(fontSize: 11, color: _muted),
+          ),
+          child: Expanded(
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _EegPainter(plot, repaint: _frames),
+                size: Size.infinite,
+              ),
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      Expanded(
+        flex: 2,
+        child: _Card(
+          title: 'Band power',
+          trailing: _ChannelSetPicker(
+            value: _bandSource,
+            onChanged: (v) => setState(() {
+              _bandSource = v;
+              _bandPowers.value = null;
+            }),
+          ),
+          child: Expanded(
+            child: ListenableBuilder(
+              listenable: Listenable.merge([headset, _bandPowers]),
+              builder: (context, _) =>
+                  _BandPowerView(powers: headset.state == HeadsetState.streaming ? _bandPowers.value : null),
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      Expanded(
+        flex: 2,
+        child: _Card(
+          title: 'Command log',
+          child: Expanded(
+            child: _Log(headset: headset, metrics: metrics),
+          ),
+        ),
+      ),
+    ],
+  );
+
+  Widget _oddballView() => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      SizedBox(
+        width: 340,
+        child: ListView(
+          children: [
+            _Card(
+              title: 'Auditory oddball',
+              child: ListenableBuilder(
+                listenable: Listenable.merge([headset, alpha]),
+                builder: (context, _) => OddballControls(
+                  session: oddball,
+                  startBlockedReason: headset.state != HeadsetState.streaming
+                      ? 'Start raw EEG in the Headset card first.'
+                      : alpha.busy
+                      ? 'Wait for the alpha test to finish.'
+                      : null,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(width: 14),
+      Expanded(
+        child: Column(
+          children: [
+            Expanded(
+              flex: 3,
+              child: _Card(
+                title: 'Average response',
+                trailing: _ChannelSetPicker(value: _erpSource, onChanged: (v) => setState(() => _erpSource = v)),
+                child: Expanded(
+                  child: ErpPanel(session: oddball, channels: _erpSource.channels),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Expanded(
+              flex: 2,
+              child: _Card(
+                title: 'Each channel',
+                trailing: const Text('Tap one to show it above', style: TextStyle(fontSize: 11, color: _muted)),
+                child: Expanded(
+                  child: ErpChannelGrid(
+                    session: oddball,
+                    selected: _erpSource.channel,
+                    onSelected: (c) => setState(() => _erpSource = _ChannelSet.channel(c)),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  Widget _alphaView() => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      SizedBox(
+        width: 340,
+        child: ListView(
+          children: [
+            _Card(
+              title: 'Eyes-closed alpha',
+              child: ListenableBuilder(
+                listenable: Listenable.merge([headset, oddball]),
+                builder: (context, _) => AlphaControls(
+                  session: alpha,
+                  startBlockedReason: headset.state != HeadsetState.streaming
+                      ? 'Start raw EEG in the Headset card first.'
+                      : oddball.busy
+                      ? 'Wait for the oddball test to finish.'
+                      : null,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(width: 14),
+      Expanded(
+        child: Column(
+          children: [
+            Expanded(
+              flex: 2,
+              child: _Card(
+                title: 'Alpha over time',
+                trailing: _ChannelSetPicker(value: _alphaSource, onChanged: (v) => setState(() => _alphaSource = v)),
+                child: Expanded(
+                  child: AlphaTimeline(session: alpha, channels: _alphaSource.channels),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Expanded(
+              flex: 3,
+              child: _Card(
+                title: 'Spectrum',
+                trailing: Text(_alphaSource.label, style: const TextStyle(fontSize: 11, color: _muted)),
+                child: Expanded(
+                  child: AlphaSpectrumPanel(session: alpha, channels: _alphaSource.channels),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Expanded(
+              flex: 2,
+              child: _Card(
+                title: 'Each channel',
+                trailing: const Text('Tap one to show it above', style: TextStyle(fontSize: 11, color: _muted)),
+                child: Expanded(
+                  child: AlphaChannelBars(
+                    session: alpha,
+                    selected: _alphaSource.channel,
+                    onSelected: (c) => setState(() => _alphaSource = _ChannelSet.channel(c)),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
 }
+
+enum _View { live, oddball, alpha }
 
 class _Card extends StatelessWidget {
   const _Card({required this.title, required this.child, this.trailing});
@@ -251,29 +466,36 @@ class _Card extends StatelessWidget {
   final Widget child;
   final Widget? trailing;
 
+  // A Material rather than a decorated box, so list tiles and buttons inside
+  // can paint their ink on it.
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      color: Colors.white,
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: _line),
+      side: const BorderSide(color: _line),
     ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink)),
-            ),
-            ?trailing,
-          ],
-        ),
-        const SizedBox(height: 14),
-        child,
-      ],
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink),
+                ),
+              ),
+              ?trailing,
+            ],
+          ),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
     ),
   );
 }
@@ -293,8 +515,13 @@ class _StreamSettings extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 3),
         child: Row(
           children: [
-            Expanded(child: Text(label, style: const TextStyle(fontSize: 12, color: _muted))),
-            Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink)),
+            Expanded(
+              child: Text(label, style: const TextStyle(fontSize: 12, color: _muted)),
+            ),
+            Text(
+              value,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
+            ),
           ],
         ),
       );
@@ -356,10 +583,8 @@ class _Log extends StatelessWidget {
     listenable: Listenable.merge([headset, metrics]),
     builder: (context, _) {
       // Both sessions' traffic, newest first; Focus lines are marked.
-      final entries = [
-        for (final e in headset.log) (e, false),
-        for (final e in metrics.log) (e, true),
-      ]..sort((a, b) => b.$1.time.compareTo(a.$1.time));
+      final entries = [for (final e in headset.log) (e, false), for (final e in metrics.log) (e, true)]
+        ..sort((a, b) => b.$1.time.compareTo(a.$1.time));
       return ListView.builder(
         itemCount: entries.length,
         itemBuilder: (context, i) {
@@ -463,7 +688,10 @@ class _EegPainter extends CustomPainter {
     for (var c = 0; c < lanes; c++) {
       final mid = laneHeight * (c + 0.5);
       canvas.drawLine(Offset(labelWidth, mid), Offset(size.width, mid), grid);
-      label.text = TextSpan(text: 'Ch${c + 1}', style: const TextStyle(fontSize: 10, color: _muted));
+      label.text = TextSpan(
+        text: 'Ch${c + 1}',
+        style: const TextStyle(fontSize: 10, color: _muted),
+      );
       label.layout();
       label.paint(canvas, Offset(0, mid - label.height / 2));
       if (count < 2) continue;
@@ -493,11 +721,11 @@ class _EegPainter extends CustomPainter {
   bool shouldRepaint(covariant _EegPainter oldDelegate) => oldDelegate.buffer != buffer;
 }
 
-/// Which EEG channels band power is averaged over.
-class _BandSource {
-  const _BandSource.all() : side = null, channel = null;
-  const _BandSource.side(EarSide this.side) : channel = null;
-  const _BandSource.channel(int this.channel) : side = null;
+/// Which EEG channels band power or the ERP is averaged over.
+class _ChannelSet {
+  const _ChannelSet.all() : side = null, channel = null;
+  const _ChannelSet.side(EarSide this.side) : channel = null;
+  const _ChannelSet.channel(int this.channel) : side = null;
 
   final EarSide? side;
   final int? channel;
@@ -517,34 +745,38 @@ class _BandSource {
   };
 
   static final options = [
-    const _BandSource.all(),
-    const _BandSource.side(EarSide.left),
-    const _BandSource.side(EarSide.right),
-    for (var c = 0; c < Mw75Protocol.eegChannelCount; c++) _BandSource.channel(c),
+    const _ChannelSet.all(),
+    const _ChannelSet.side(EarSide.left),
+    const _ChannelSet.side(EarSide.right),
+    for (var c = 0; c < Mw75Protocol.eegChannelCount; c++) _ChannelSet.channel(c),
   ];
 
   @override
-  bool operator ==(Object other) => other is _BandSource && other.side == side && other.channel == channel;
+  bool operator ==(Object other) => other is _ChannelSet && other.side == side && other.channel == channel;
 
   @override
   int get hashCode => Object.hash(side, channel);
 }
 
-class _BandSourcePicker extends StatelessWidget {
-  const _BandSourcePicker({required this.value, required this.onChanged});
+class _ChannelSetPicker extends StatelessWidget {
+  const _ChannelSetPicker({required this.value, required this.onChanged});
 
-  final _BandSource value;
-  final ValueChanged<_BandSource> onChanged;
+  final _ChannelSet value;
+  final ValueChanged<_ChannelSet> onChanged;
 
   @override
-  Widget build(BuildContext context) => PopupMenuButton<_BandSource>(
+  Widget build(BuildContext context) => PopupMenuButton<_ChannelSet>(
     tooltip: 'Channels to average',
     initialValue: value,
     onSelected: onChanged,
     position: PopupMenuPosition.under,
     itemBuilder: (context) => [
-      for (final o in _BandSource.options)
-        PopupMenuItem(value: o, height: 32, child: Text(o.label, style: const TextStyle(fontSize: 12))),
+      for (final o in _ChannelSet.options)
+        PopupMenuItem(
+          value: o,
+          height: 32,
+          child: Text(o.label, style: const TextStyle(fontSize: 12)),
+        ),
     ],
     child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -556,7 +788,10 @@ class _BandSourcePicker extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(value.label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _ink)),
+          Text(
+            value.label,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _ink),
+          ),
           const SizedBox(width: 6),
           const Icon(Icons.expand_more_rounded, size: 16, color: _muted),
         ],
@@ -566,7 +801,6 @@ class _BandSourcePicker extends StatelessWidget {
 }
 
 const _tabular = [FontFeature.tabularFigures()];
-
 
 /// One vertical bar per band: relative power as the bar, the percentage and
 /// absolute µV²/Hz above it, the band name and range below.
@@ -612,7 +846,12 @@ class _BandPowerView extends StatelessWidget {
                   children: [
                     Text(
                       '${(p.relative[band]! * 100).toStringAsFixed(1)}%',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink, fontFeatures: _tabular),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                        fontFeatures: _tabular,
+                      ),
                     ),
                     if (!compact)
                       Text(
@@ -649,9 +888,15 @@ class _BandPowerView extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Text(band.label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink)),
+                    Text(
+                      band.label,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
+                    ),
                     if (!compact)
-                      Text('${_hz(band.low)}–${_hz(band.high)} Hz', style: const TextStyle(fontSize: 10, color: _muted)),
+                      Text(
+                        '${_hz(band.low)}–${_hz(band.high)} Hz',
+                        style: const TextStyle(fontSize: 10, color: _muted),
+                      ),
                   ],
                 ),
               ),

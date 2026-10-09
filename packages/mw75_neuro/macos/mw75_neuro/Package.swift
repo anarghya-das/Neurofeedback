@@ -21,7 +21,10 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("IOBluetooth"),
-                .linkedFramework("CoreBluetooth")
+                .linkedFramework("CoreBluetooth"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("AudioToolbox"),
+                .linkedFramework("CoreAudio")
             ]
         )
     ]

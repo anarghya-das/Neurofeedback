@@ -37,6 +37,10 @@ struct Command {
   static let enableEeg = mw75("enable_eeg", 0x60, 0x01)
   static let enableRawMode = mw75("enable_raw_mode", 0x41, 0x01)
   static let disableRawMode = mw75("disable_raw_mode", 0x41, 0x00)
+  static let getCurrentState = mw75("get_current_state", 0x79, 0xFF)
+  // Speculative: the per-cup contact message (0xE1) is unsolicited in metrics mode;
+  // this probes whether sending it as a "get" elicits a reply during raw mode.
+  static let getContact = mw75("get_contact?", 0xE1, 0xFF)
   static let getVersion = Command(name: "get_application_version", bytes: [0xFF, 0x04, 0x00, 0x00, 0x00, 0x1D, 0x00, 0x05])
 }
 
@@ -209,7 +213,7 @@ final class Checks {
 
 let args = CommandLine.arguments
 guard args.count >= 3 else {
-  print("usage: mw75_probe <bt-address> sdp|query|reset|startstop [cycles] [secs]")
+  print("usage: mw75_probe <bt-address> sdp|query|reset|startstop [cycles] [secs]|contact [secs]")
   exit(2)
 }
 guard let device = IOBluetoothDevice(addressString: args[1]) else {
@@ -306,6 +310,86 @@ case "startstop":
   probe.close()
   print(checks.failed == 0 ? "ALL CHECKS PASSED" : "\(checks.failed) CHECK(S) FAILED")
   exit(checks.failed == 0 ? 0 : 1)
+
+case "contact":
+  // Tests whether the headset will report its per-cup contact level
+  // (09 9A 03 E1 <left> <right>, 0-5 each) during raw EEG streaming, by polling the
+  // command channel while raw mode is on. Research Kit only gets contact in metrics
+  // (BLE) mode; on hardware the headset otherwise emits E1 on RFCOMM only when the
+  // command channel opens and once when raw mode ends (docs/neurable-mw75-protocol.md).
+  let seconds = args.count > 3 ? Double(args[3]) ?? 20 : 20
+  guard openChannels() else { exit(1) }
+  spin(0.5)
+
+  // E1 contact frames seen on the command channel from `index` onward.
+  func contactFrames(from index: Int) -> [Frame] {
+    probe.frames[index...].filter {
+      $0.bytes.count >= 10 && $0.bytes[4] == 0x09 && $0.bytes[5] == 0x9A && $0.bytes[7] == 0xE1
+    }
+  }
+  // E1 signatures muxed into the data channel (command replies share it, sync 0xF6),
+  // found by raw pattern 09 9A 03 E1 <L> <R>.
+  func contactInData(_ chunk: [UInt8]) -> [(UInt8, UInt8)] {
+    var hits: [(UInt8, UInt8)] = []
+    var i = 0
+    while i + 5 < chunk.count {
+      if chunk[i] == 0x09 && chunk[i + 1] == 0x9A && chunk[i + 2] == 0x03 && chunk[i + 3] == 0xE1 {
+        hits.append((chunk[i + 4], chunk[i + 5])); i += 6
+      } else { i += 1 }
+    }
+    return hits
+  }
+  func printContacts(_ fs: [Frame]) {
+    for f in fs { print("    \(hex(f.bytes))  L=\(f.bytes[8]) R=\(f.bytes[9])") }
+  }
+
+  if probe.send(.getEegMode)?.value != 1 { probe.send(.enableEeg) }
+
+  print("=== phase 0: 3 s idle (command channel open, raw mode off) ===")
+  var idx = probe.frames.count
+  spin(3)
+  let idleContacts = contactFrames(from: idx)
+  print("  E1 contact frames while idle: \(idleContacts.count)")
+  printContacts(idleContacts)
+
+  if probe.measure(1.0).bytes > 0 { probe.send(.disableRawMode); spin(1.0) }
+  print("=== phase 1: enable raw mode ===")
+  print("  enable_raw_mode acknowledged: \(probe.send(.enableRawMode)?.acknowledged == true)")
+  spin(1.0)
+  let warm = probe.measure(2.0)
+  print("  EEG packets in 2 s: \(warm.packets) (streaming=\(warm.packets > 50))")
+
+  print("=== phase 2: poll for contact during raw streaming (\(Int(seconds)) s) ===")
+  idx = probe.frames.count
+  let dataStart = probe.dataBytes.count
+  let pollers: [Command] = [.getCurrentState, .getContact, .getBattery]
+  let deadline = Date().addingTimeInterval(seconds)
+  var tick = 0
+  while Date() < deadline {
+    probe.send(pollers[tick % pollers.count], timeout: 0.8)
+    tick += 1
+    spin(1.0)
+  }
+  let streamFrames = contactFrames(from: idx)
+  let streamData = contactInData(Array(probe.dataBytes[dataStart...]))
+  print("  E1 frames on command channel during streaming: \(streamFrames.count)")
+  printContacts(streamFrames)
+  print("  E1 signatures in raw data channel during streaming: \(streamData.count)")
+  for (l, r) in streamData.prefix(10) { print("    data E1  L=\(l) R=\(r)") }
+
+  idx = probe.frames.count
+  probe.send(.disableRawMode)
+  spin(1.5)
+  let endContacts = contactFrames(from: idx)
+  print("=== phase 3: \(endContacts.count) E1 frame(s) at raw-mode-end ===")
+  printContacts(endContacts)
+
+  probe.close()
+  let viable = !streamFrames.isEmpty || !streamData.isEmpty
+  print(viable
+    ? "RESULT: contact (E1) IS reachable during raw streaming (\(streamFrames.count) cmd + \(streamData.count) data frames) — Option B viable: poll ~1/s."
+    : "RESULT: no contact (E1) during raw streaming — Option B not viable; use host-side signal quality (Option A).")
+  exit(viable ? 0 : 1)
 
 default:
   print("unknown mode \(args[2])")

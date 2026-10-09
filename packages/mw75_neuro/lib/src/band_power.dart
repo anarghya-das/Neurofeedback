@@ -130,7 +130,7 @@ class BandPowerEstimator {
   }
 
   /// Copies one segment into [out] with its least-squares line removed.
-  static void _detrendInto(Float64List data, int start, Float64List out) {
+  static void _detrendInto(List<double> data, int start, Float64List out) {
     const n = segment;
     const meanX = (n - 1) / 2;
     var meanY = 0.0;
@@ -148,6 +148,40 @@ class BandPowerEstimator {
     for (var i = 0; i < n; i++) {
       out[i] = data[start + i] - meanY - slope * (i - meanX);
     }
+  }
+}
+
+/// The power spectrum of one [size]-sample segment, prepared the same way as
+/// [BandPowerEstimator]'s: linear detrend, Hann window, one-sided density in
+/// µV²/Hz. For callers that need a spectrum per segment rather than an average.
+class SegmentSpectrum {
+  static const size = BandPowerEstimator.segment;
+  static const bins = size ~/ 2 + 1;
+
+  final _fft = _Fft(size);
+  final _re = Float64List(size);
+  final _im = Float64List(size);
+  late final _window = Float64List.fromList([
+    for (var i = 0; i < size; i++) 0.5 - 0.5 * math.cos(2 * math.pi * i / (size - 1)),
+  ]);
+  late final _windowPower = _window.fold<double>(0, (s, w) => s + w * w);
+
+  /// Density at `k * sampleRate / size` Hz for k up to [bins] - 1, from
+  /// `data[start] .. data[start + size - 1]`.
+  Float64List psd(List<double> data, int start, double sampleRate) {
+    BandPowerEstimator._detrendInto(data, start, _re);
+    for (var i = 0; i < size; i++) {
+      _re[i] *= _window[i];
+      _im[i] = 0;
+    }
+    _fft.transform(_re, _im);
+    final scale = 1 / (sampleRate * _windowPower);
+    final out = Float64List(bins);
+    for (var k = 0; k < bins; k++) {
+      final p = (_re[k] * _re[k] + _im[k] * _im[k]) * scale;
+      out[k] = (k == 0 || k == bins - 1) ? p : 2 * p;
+    }
+    return out;
   }
 }
 
