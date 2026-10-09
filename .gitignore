@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# MW75 hardware probe binary, rebuilt by tools/mw75_probe/build.sh
+/tools/mw75_probe/mw75_probe

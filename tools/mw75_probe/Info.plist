@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>edu.buffalo.neurofeedback.mw75-probe</string>
+	<key>CFBundleName</key>
+	<string>mw75_probe</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Talks to the MW75 Neuro headset over Bluetooth to test EEG streaming.</string>
+</dict>
+</plist>
