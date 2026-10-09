@@ -1,0 +1,6 @@
+# Build output (the root .gitignore only covers the app's own /build/).
+/build/
+
+# Libraries don't commit their lockfile; the app that depends on this package
+# pins versions in its own pubspec.lock.
+/pubspec.lock

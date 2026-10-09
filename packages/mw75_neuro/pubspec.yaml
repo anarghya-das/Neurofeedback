@@ -1,0 +1,24 @@
+name: mw75_neuro
+description: "Neurable MW75 Neuro driver for macOS: RFCOMM transport, start/stop, signal quality and an LSL outlet compatible with Neurable Research Kit."
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.10.0-75.1.beta
+  flutter: ">=3.44.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.3
+  lsl_bindings: ^0.0.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      macos:
+        pluginClass: Mw75NeuroPlugin
