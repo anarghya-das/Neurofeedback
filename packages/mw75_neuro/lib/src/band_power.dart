@@ -34,6 +34,18 @@ class BandPowers {
   final int channelsUsed;
 }
 
+/// The mean power spectrum of some channels, for plotting.
+class PowerSpectrum {
+  const PowerSpectrum({required this.binHz, required this.density, required this.channelsUsed});
+
+  /// Spacing of the bins: bin k is at k × [binHz] Hz.
+  final double binHz;
+
+  /// µV²/Hz per bin, from 0 Hz to half the sample rate.
+  final Float64List density;
+  final int channelsUsed;
+}
+
 /// Welch band power over the most recent ~2 s of each EEG channel.
 ///
 /// Uses 512-sample Hann-windowed segments with 50% overlap and a linear detrend
@@ -72,43 +84,17 @@ class BandPowerEstimator {
   /// Band powers averaged over [channels] (0-based EEG channel indices), or
   /// null until ~2 s of data have arrived.
   BandPowers? compute({required double sampleRate, required Iterable<int> channels}) {
-    if (_filled < _history) return null;
-    final selected = channels.toList();
-    if (selected.isEmpty) return null;
-
-    final bins = segment ~/ 2 + 1;
-    final psd = Float64List(bins);
-    final re = Float64List(segment);
-    final im = Float64List(segment);
-    final scale = 1 / (sampleRate * _windowPower);
-    const starts = [0, segment ~/ 2, segment];
-    var segments = 0;
-
-    for (final c in selected) {
-      final data = _ordered(_channels[c]);
-      for (final start in starts) {
-        _detrendInto(data, start, re);
-        for (var i = 0; i < segment; i++) {
-          re[i] *= _window[i];
-          im[i] = 0;
-        }
-        _fft.transform(re, im);
-        for (var k = 0; k < bins; k++) {
-          final p = (re[k] * re[k] + im[k] * im[k]) * scale;
-          psd[k] += (k == 0 || k == bins - 1) ? p : 2 * p;
-        }
-        segments++;
-      }
-    }
-
-    final df = sampleRate / segment;
+    final spectrum = this.spectrum(sampleRate: sampleRate, channels: channels);
+    if (spectrum == null) return null;
+    final psd = spectrum.density;
+    final df = spectrum.binHz;
     final power = <EegBand, double>{};
     var total = 0.0;
     for (final band in EegBand.values) {
       var sum = 0.0;
-      for (var k = 0; k < bins; k++) {
+      for (var k = 0; k < psd.length; k++) {
         final f = k * df;
-        if (f >= band.low && f < band.high) sum += psd[k] / segments * df;
+        if (f >= band.low && f < band.high) sum += psd[k] * df;
       }
       power[band] = sum;
       total += sum;
@@ -116,8 +102,53 @@ class BandPowerEstimator {
     return BandPowers(
       density: {for (final b in EegBand.values) b: power[b]! / (b.high - b.low)},
       relative: {for (final b in EegBand.values) b: total == 0 ? 0 : power[b]! / total},
-      channelsUsed: selected.length,
+      channelsUsed: spectrum.channelsUsed,
     );
+  }
+
+  /// The Welch spectrum averaged over [channels], or null until ~2 s of data
+  /// have arrived.
+  PowerSpectrum? spectrum({required double sampleRate, required Iterable<int> channels}) {
+    final each = spectra(sampleRate: sampleRate, channels: channels);
+    if (each == null || each.isEmpty) return null;
+    final psd = Float64List(each.first.density.length);
+    for (final s in each) {
+      for (var k = 0; k < psd.length; k++) {
+        psd[k] += s.density[k] / each.length;
+      }
+    }
+    return PowerSpectrum(binHz: each.first.binHz, density: psd, channelsUsed: each.length);
+  }
+
+  /// One Welch spectrum per channel in [channels], in the same order, or null
+  /// until ~2 s of data have arrived.
+  List<PowerSpectrum>? spectra({required double sampleRate, required Iterable<int> channels}) {
+    if (_filled < _history) return null;
+    const bins = segment ~/ 2 + 1;
+    const starts = [0, segment ~/ 2, segment];
+    final re = Float64List(segment);
+    final im = Float64List(segment);
+    final scale = 1 / (sampleRate * _windowPower);
+    return [
+      for (final c in channels)
+        () {
+          final data = _ordered(_channels[c]);
+          final psd = Float64List(bins);
+          for (final start in starts) {
+            _detrendInto(data, start, re);
+            for (var i = 0; i < segment; i++) {
+              re[i] *= _window[i];
+              im[i] = 0;
+            }
+            _fft.transform(re, im);
+            for (var k = 0; k < bins; k++) {
+              final p = (re[k] * re[k] + im[k] * im[k]) * scale;
+              psd[k] += ((k == 0 || k == bins - 1) ? p : 2 * p) / starts.length;
+            }
+          }
+          return PowerSpectrum(binHz: sampleRate / segment, density: psd, channelsUsed: 1);
+        }(),
+    ];
   }
 
   /// The ring buffer, oldest sample first.

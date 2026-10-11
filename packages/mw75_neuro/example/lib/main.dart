@@ -48,7 +48,15 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
 
   /// Finished test runs: one folder each, with results and the raw EEG.
   static final _store = TestRunStore(Directory('${Platform.environment['HOME']}/Documents/MW75 Tests'));
-  final plot = _PlotBuffer(seconds: _EegPainter.window);
+  final plot = EegPlotBuffer(seconds: EegTracePainter.maxWindow);
+
+  /// Live EEG view: per-channel scale (± µV; 0 = automatic) and time window.
+  int _eegScale = 100;
+  double _eegWindow = 4;
+
+  /// Per-channel limits for the automatic scale, OpenBCI GUI style.
+  final _eegAuto = EegAutoScale();
+  Offset? _eegHover;
   StreamSubscription<List<Mw75Sample>>? _samples;
   Timer? _consoleStatus;
   final _streamName = TextEditingController(text: Mw75Headset.defaultStreamName);
@@ -56,10 +64,20 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   final bands = BandPowerEstimator();
   final _bandPowers = ValueNotifier<BandPowers?>(null);
 
+  /// Per channel shown: (channel index, its spectrum).
+  final _spectrum = ValueNotifier<List<(int, PowerSpectrum)>?>(null);
+  _BandView _bandView = _BandView.bars;
+
+  /// The command log starts folded; its header opens it.
+  bool _logOpen = false;
+
   /// Drives the live plot: one repaint per screen refresh while streaming.
   late final AnimationController _frames = AnimationController(vsync: this, duration: const Duration(seconds: 1));
   _ChannelSet _bandSource = const _ChannelSet.all();
-  _ChannelSet _erpSource = const _ChannelSet.all();
+
+  /// Both cups' top-minus-bottom pairs: where around-the-ear studies find the
+  /// P300 strongest, chosen before looking at results.
+  _ChannelSet _erpSource = const _ChannelSet.bipolar();
   _ChannelSet _alphaSource = const _ChannelSet.all();
   _View _view = _View.live;
   Timer? _bandTimer;
@@ -85,7 +103,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
         );
       }
       if (oddball.busy) {
-        final s = oddball.summary(_erpSource.channels);
+        final s = oddball.summary(_erpSource.channels, minus: _erpSource.minus);
         String p(WindowTest? t) => t == null ? '-' : '${t.effect.toStringAsFixed(2)}uV p=${t.p.toStringAsFixed(3)}';
         debugPrint(
           '[bench] oddball ${oddball.state.name} tone ${oddball.trialsPlayed}/${oddball.plannedTrials} '
@@ -100,7 +118,8 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
           '[bench] alpha ${alpha.state.name} block ${alpha.blockNumber}/${alpha.blockCount} '
           'eyes=${alpha.eyesClosedNow == true ? 'closed' : 'open'} windows=${alpha.current?.timeline.length} '
           'blocks open=${s.openBlocks} closed=${s.closedBlocks} ratio=${s.ratio?.toStringAsFixed(2)} '
-          'p=${s.p?.toStringAsFixed(4)} peak=${s.peakHz?.toStringAsFixed(1)}Hz',
+          'p=${s.p?.toStringAsFixed(4)} peak=${s.peakHz?.toStringAsFixed(1)}Hz '
+          'share=${s.shareRatio?.toStringAsFixed(2)} shareP=${s.shareP?.toStringAsFixed(4)}',
         );
       }
       if (headset.state == HeadsetState.idle) return;
@@ -142,7 +161,9 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
     if (state == HeadsetState.starting && _lastState != HeadsetState.starting) {
       bands.clear();
       plot.clear();
+      _eegAuto.clear();
       _bandPowers.value = null;
+      _spectrum.value = null;
     }
     // Repaint the plot every frame only while there is something to scroll.
     if (state == HeadsetState.streaming) {
@@ -155,12 +176,16 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
 
   void _updateBands() {
     if (headset.state != HeadsetState.streaming || !mounted) return;
-    final p = bands.compute(
-      sampleRate: headset.effectiveRate ?? Mw75Protocol.samplingRate,
-      channels: _bandSource.channels,
-    );
-    if (p == null) return;
-    _bandPowers.value = p;
+    final rate = headset.effectiveRate ?? Mw75Protocol.samplingRate;
+    switch (_bandView) {
+      case _BandView.bars:
+        final p = bands.compute(sampleRate: rate, channels: _bandSource.channels);
+        if (p != null) _bandPowers.value = p;
+      case _BandView.spectrum:
+        final channels = _bandSource.channels;
+        final p = bands.spectra(sampleRate: rate, channels: channels);
+        if (p != null) _spectrum.value = [for (var i = 0; i < p.length; i++) (channels[i], p[i])];
+    }
   }
 
   @override
@@ -170,6 +195,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
     _samples?.cancel();
     _frames.dispose();
     _bandPowers.dispose();
+    _spectrum.dispose();
     _consoleStatus?.cancel();
     oddball.dispose();
     alpha.dispose();
@@ -229,6 +255,11 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                   ),
                   const SizedBox(height: 14),
                   _Card(
+                    title: 'Filters',
+                    child: FilterSettingsPanel(headset: headset),
+                  ),
+                  const SizedBox(height: 14),
+                  _Card(
                     title: 'Stream',
                     child: _StreamSettings(headset: headset, name: _streamName),
                   ),
@@ -279,16 +310,63 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
         flex: 3,
         child: _Card(
           title: 'Live EEG',
-          trailing: const Text(
-            'Last 4 s, drawn 0.35 s behind live, offset removed',
-            style: TextStyle(fontSize: 11, color: _muted),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _Picker<int>(
+                value: _eegScale,
+                options: const [0, ...EegTracePainter.scaleOptions],
+                label: (v) => v == 0 ? 'Scale: auto (per channel)' : 'Scale: ±$v µV',
+                tooltip: 'Vertical scale, per channel',
+                onChanged: (v) => setState(() {
+                  _eegScale = v;
+                  _eegAuto.clear();
+                }),
+              ),
+              const SizedBox(width: 8),
+              _Picker<double>(
+                value: _eegWindow,
+                options: EegTracePainter.windowOptions,
+                label: (v) => 'Window: ${v.round()} s',
+                tooltip: 'Seconds shown across the plot: longer scrolls slower',
+                onChanged: (v) => setState(() => _eegWindow = v),
+              ),
+            ],
           ),
           child: Expanded(
-            child: RepaintBoundary(
-              child: CustomPaint(
-                painter: _EegPainter(plot, repaint: _frames),
-                size: Size.infinite,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ListenableBuilder(
+                  listenable: headset,
+                  builder: (context, _) => Text(
+                    'Filters: ${headset.filters.describe()} · '
+                    '${_eegScale == 0 ? 'each channel scaled to its own min–max, updated every second' : 'each channel centred on its mean'} · '
+                    'drawn ${EegTracePainter.delay} s behind live · hover to read values',
+                    style: const TextStyle(fontSize: 11, color: _muted),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Expanded(
+                  child: MouseRegion(
+                    onHover: (e) => setState(() => _eegHover = e.localPosition),
+                    onExit: (_) => setState(() => _eegHover = null),
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: EegTracePainter(
+                          plot,
+                          repaint: _frames,
+                          window: _eegWindow,
+                          halfRangeUv: _eegScale.toDouble(),
+                          autoScale: _eegScale == 0 ? _eegAuto : null,
+                          hover: _eegHover,
+                        ),
+                        size: Size.infinite,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -298,32 +376,67 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
         flex: 2,
         child: _Card(
           title: 'Band power',
-          trailing: _ChannelSetPicker(
-            value: _bandSource,
-            onChanged: (v) => setState(() {
-              _bandSource = v;
-              _bandPowers.value = null;
-            }),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _Picker<_BandView>(
+                value: _bandView,
+                options: _BandView.values,
+                label: (v) => v.label,
+                tooltip: 'What to show',
+                onChanged: (v) => setState(() {
+                  _bandView = v;
+                  _updateBands();
+                }),
+              ),
+              const SizedBox(width: 8),
+              _ChannelSetPicker(
+                value: _bandSource,
+                onChanged: (v) => setState(() {
+                  _bandSource = v;
+                  _bandPowers.value = null;
+                  _spectrum.value = null;
+                }),
+              ),
+            ],
           ),
           child: Expanded(
             child: ListenableBuilder(
-              listenable: Listenable.merge([headset, _bandPowers]),
-              builder: (context, _) =>
-                  _BandPowerView(powers: headset.state == HeadsetState.streaming ? _bandPowers.value : null),
+              listenable: Listenable.merge([headset, _bandPowers, _spectrum]),
+              builder: (context, _) {
+                final streaming = headset.state == HeadsetState.streaming;
+                return switch (_bandView) {
+                  _BandView.bars => _BandPowerView(powers: streaming ? _bandPowers.value : null),
+                  _BandView.spectrum => ChannelSpectrumPlot(
+                    spectrum: streaming ? _spectrum.value : null,
+                    filters: headset.filters,
+                    mainsHz: headset.mainsHz,
+                  ),
+                };
+              },
             ),
           ),
         ),
       ),
       const SizedBox(height: 14),
-      Expanded(
-        flex: 2,
-        child: _Card(
-          title: 'Command log',
-          child: Expanded(
-            child: _Log(headset: headset, metrics: metrics),
+      if (_logOpen)
+        Expanded(
+          flex: 2,
+          child: _Card(
+            title: 'Command log',
+            onHeaderTap: () => setState(() => _logOpen = false),
+            trailing: const _FoldLabel(open: true),
+            child: Expanded(
+              child: _Log(headset: headset, metrics: metrics),
+            ),
           ),
+        )
+      else
+        _Card(
+          title: 'Command log',
+          onHeaderTap: () => setState(() => _logOpen = true),
+          trailing: const _FoldLabel(open: false),
         ),
-      ),
     ],
   );
 
@@ -359,9 +472,13 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
               flex: 3,
               child: _Card(
                 title: 'Average response',
-                trailing: _ChannelSetPicker(value: _erpSource, onChanged: (v) => setState(() => _erpSource = v)),
+                trailing: _ChannelSetPicker(
+                  value: _erpSource,
+                  erp: true,
+                  onChanged: (v) => setState(() => _erpSource = v),
+                ),
                 child: Expanded(
-                  child: ErpPanel(session: oddball, channels: _erpSource.channels),
+                  child: ErpPanel(session: oddball, channels: _erpSource.channels, minus: _erpSource.minus),
                 ),
               ),
             ),
@@ -459,12 +576,46 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
 
 enum _View { live, oddball, alpha }
 
+enum _BandView {
+  bars('Band power'),
+  spectrum('Spectrum (FFT)');
+
+  const _BandView(this.label);
+
+  final String label;
+}
+
 class _Card extends StatelessWidget {
-  const _Card({required this.title, required this.child, this.trailing});
+  const _Card({required this.title, this.child, this.trailing, this.onHeaderTap});
 
   final String title;
-  final Widget child;
+
+  /// Null shows the header alone (a folded card).
+  final Widget? child;
   final Widget? trailing;
+
+  /// Makes the header a button, for cards that fold.
+  final VoidCallback? onHeaderTap;
+
+  Widget _header() {
+    final row = Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink),
+          ),
+        ),
+        ?trailing,
+      ],
+    );
+    final tap = onHeaderTap;
+    if (tap == null) return row;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: tap, child: row),
+    );
+  }
 
   // A Material rather than a decorated box, so list tiles and buttons inside
   // can paint their ink on it.
@@ -481,22 +632,31 @@ class _Card extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink),
-                ),
-              ),
-              ?trailing,
-            ],
-          ),
-          const SizedBox(height: 14),
-          child,
+          _header(),
+          if (child != null) ...[const SizedBox(height: 14), child!],
         ],
       ),
     ),
+  );
+}
+
+/// "Show ⌄" / "Hide ⌃" for a folding card's header.
+class _FoldLabel extends StatelessWidget {
+  const _FoldLabel({required this.open});
+
+  final bool open;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        open ? 'Hide' : 'Show',
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _muted),
+      ),
+      const SizedBox(width: 2),
+      Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18, color: _muted),
+    ],
   );
 }
 
@@ -565,7 +725,6 @@ class _StreamSettings extends StatelessWidget {
           const SizedBox(height: 6),
           toggle('Publish to LSL', headset.publishToLsl, idle ? (v) => headset.publishToLsl = v : null),
           toggle('Fill lost packets (interpolate)', headset.interpolate, (v) => headset.interpolate = v),
-          toggle('Remove DC offset (0.5 Hz high-pass)', headset.removeDcOffset, (v) => headset.removeDcOffset = v),
         ],
       );
     },
@@ -605,142 +764,45 @@ class _Log extends StatelessWidget {
   );
 }
 
-/// Recent Ch1–Ch12 samples and their LSL timestamps, for the live plot.
-class _PlotBuffer {
-  _PlotBuffer({required double seconds})
-    : capacity = ((seconds + _EegPainter.delay + 1) * Mw75Protocol.samplingRate).toInt();
-
-  final int capacity;
-  final times = <double>[];
-  final channels = List.generate(Mw75Protocol.eegChannelCount, (_) => <double>[]);
-
-  void addAll(List<Mw75Sample> samples) {
-    for (final s in samples) {
-      times.add(s.time);
-      for (var c = 0; c < channels.length; c++) {
-        channels[c].add(s.values[c]);
-      }
-    }
-    // Trim in chunks so most batches do not shift the whole list.
-    final excess = times.length - capacity;
-    if (excess > 250) {
-      times.removeRange(0, excess);
-      for (final ch in channels) {
-        ch.removeRange(0, excess);
-      }
-    }
-  }
-
-  void clear() {
-    times.clear();
-    for (final ch in channels) {
-      ch.clear();
-    }
-  }
-
-  /// Index of the first sample at or after [t] (times are increasing).
-  int firstAtOrAfter(double t) {
-    var lo = 0, hi = times.length;
-    while (lo < hi) {
-      final mid = (lo + hi) >> 1;
-      if (times[mid] < t) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
-    return lo;
-  }
-}
-
-/// Scrolls by time, not by sample count: each frame shows the [window] ending
-/// [delay] before now. Bluetooth delivers samples in bursts; drawing slightly
-/// in the past means a burst is already in hand when its time comes, so the
-/// traces glide at real speed instead of jumping whenever data lands.
-class _EegPainter extends CustomPainter {
-  _EegPainter(this.buffer, {required Listenable repaint}) : super(repaint: repaint);
-
-  static const window = 4.0;
-  static const delay = 0.35;
-  final _PlotBuffer buffer;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final lanes = buffer.channels.length;
-    final laneHeight = size.height / lanes;
-    final label = TextPainter(textDirection: TextDirection.ltr);
-    final grid = Paint()..color = const Color(0xFFEEF0F3);
-    final trace = Paint()
-      ..color = const Color(0xFF2B4C7E)
-      ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
-    const labelWidth = 34.0;
-    final plotWidth = size.width - labelWidth;
-    const halfRangeUv = 100.0;
-
-    final end = LslEegOutlet.localClock() - delay;
-    final start = end - window;
-    final first = buffer.firstAtOrAfter(start);
-    final last = buffer.firstAtOrAfter(end); // exclusive
-    final count = last - first;
-    final step = math.max(1, count ~/ math.max(1, plotWidth.toInt()));
-
-    for (var c = 0; c < lanes; c++) {
-      final mid = laneHeight * (c + 0.5);
-      canvas.drawLine(Offset(labelWidth, mid), Offset(size.width, mid), grid);
-      label.text = TextSpan(
-        text: 'Ch${c + 1}',
-        style: const TextStyle(fontSize: 10, color: _muted),
-      );
-      label.layout();
-      label.paint(canvas, Offset(0, mid - label.height / 2));
-      if (count < 2) continue;
-
-      final data = buffer.channels[c];
-      var mean = 0.0;
-      for (var i = first; i < last; i++) {
-        mean += data[i];
-      }
-      mean /= count;
-      final path = Path();
-      for (var i = first; i < last; i += step) {
-        final x = labelWidth + plotWidth * (buffer.times[i] - start) / window;
-        final v = ((data[i] - mean) / halfRangeUv).clamp(-1.0, 1.0);
-        final y = mid - v * laneHeight * 0.45;
-        if (i == first) {
-          path.moveTo(x, y);
-        } else {
-          path.lineTo(x, y);
-        }
-      }
-      canvas.drawPath(path, trace);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _EegPainter oldDelegate) => oldDelegate.buffer != buffer;
-}
-
-/// Which EEG channels band power or the ERP is averaged over.
+/// Which EEG channels band power or the ERP is averaged over, or, for the
+/// ERP, a cup's top electrode minus its bottom one (see [Mw75Montage]).
 class _ChannelSet {
-  const _ChannelSet.all() : side = null, channel = null;
-  const _ChannelSet.side(EarSide this.side) : channel = null;
-  const _ChannelSet.channel(int this.channel) : side = null;
+  const _ChannelSet.all() : side = null, channel = null, bipolar = false;
+  const _ChannelSet.side(EarSide this.side) : channel = null, bipolar = false;
+  const _ChannelSet.channel(int this.channel) : side = null, bipolar = false;
+
+  /// Top minus bottom on one cup, or ([side] null) on both cups averaged.
+  const _ChannelSet.bipolar([this.side]) : channel = null, bipolar = true;
 
   final EarSide? side;
   final int? channel;
+  final bool bipolar;
 
-  List<int> get channels => switch ((side, channel)) {
-    (_, final int c) => [c],
-    (EarSide.left, _) => [0, 1, 2, 3, 4, 5],
-    (EarSide.right, _) => [6, 7, 8, 9, 10, 11],
+  List<int> get channels => switch ((side, channel, bipolar)) {
+    (_, final int c, _) => [c],
+    (EarSide.left, _, true) => [Mw75Montage.leftTop],
+    (EarSide.right, _, true) => [Mw75Montage.rightTop],
+    (null, _, true) => [Mw75Montage.leftTop, Mw75Montage.rightTop],
+    (EarSide.left, _, _) => [0, 1, 2, 3, 4, 5],
+    (EarSide.right, _, _) => [6, 7, 8, 9, 10, 11],
     _ => List.generate(Mw75Protocol.eegChannelCount, (i) => i),
   };
 
-  String get label => switch ((side, channel)) {
-    (_, final int c) => 'Ch${c + 1}',
-    (EarSide.left, _) => 'Left cup (Ch1–6)',
-    (EarSide.right, _) => 'Right cup (Ch7–12)',
+  /// Subtracted from [channels]; empty unless [bipolar].
+  List<int> get minus => switch ((side, bipolar)) {
+    (EarSide.left, true) => [Mw75Montage.leftBottom],
+    (EarSide.right, true) => [Mw75Montage.rightBottom],
+    (null, true) => [Mw75Montage.leftBottom, Mw75Montage.rightBottom],
+    _ => const [],
+  };
+
+  String get label => switch ((side, channel, bipolar)) {
+    (_, final int c, _) => 'Ch${c + 1}',
+    (EarSide.left, _, true) => 'Left top − bottom (Ch2 − Ch5)',
+    (EarSide.right, _, true) => 'Right top − bottom (Ch8 − Ch11)',
+    (null, _, true) => 'Both cups, top − bottom',
+    (EarSide.left, _, _) => 'Left cup (Ch1–6)',
+    (EarSide.right, _, _) => 'Right cup (Ch7–12)',
     _ => 'All EEG channels',
   };
 
@@ -751,31 +813,76 @@ class _ChannelSet {
     for (var c = 0; c < Mw75Protocol.eegChannelCount; c++) _ChannelSet.channel(c),
   ];
 
-  @override
-  bool operator ==(Object other) => other is _ChannelSet && other.side == side && other.channel == channel;
+  /// For the ERP: the bipolar pairs first, the pre-chosen main measure.
+  static final erpOptions = [
+    const _ChannelSet.bipolar(),
+    const _ChannelSet.bipolar(EarSide.left),
+    const _ChannelSet.bipolar(EarSide.right),
+    ...options,
+  ];
 
   @override
-  int get hashCode => Object.hash(side, channel);
+  bool operator ==(Object other) =>
+      other is _ChannelSet && other.side == side && other.channel == channel && other.bipolar == bipolar;
+
+  @override
+  int get hashCode => Object.hash(side, channel, bipolar);
 }
 
 class _ChannelSetPicker extends StatelessWidget {
-  const _ChannelSetPicker({required this.value, required this.onChanged});
+  const _ChannelSetPicker({required this.value, required this.onChanged, this.erp = false});
 
   final _ChannelSet value;
   final ValueChanged<_ChannelSet> onChanged;
 
+  /// Offer the ERP's bipolar pairs too.
+  final bool erp;
+
+  // The ⓘ beside it explains what each choice measures.
   @override
-  Widget build(BuildContext context) => PopupMenuButton<_ChannelSet>(
-    tooltip: 'Channels to average',
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      _Picker<_ChannelSet>(
+        value: value,
+        options: erp ? _ChannelSet.erpOptions : _ChannelSet.options,
+        label: (o) => o.label,
+        tooltip: 'Channels to average',
+        onChanged: onChanged,
+      ),
+      const MontageInfoButton(),
+    ],
+  );
+}
+
+/// A compact menu button for card headers.
+class _Picker<T> extends StatelessWidget {
+  const _Picker({
+    required this.value,
+    required this.options,
+    required this.label,
+    required this.tooltip,
+    required this.onChanged,
+  });
+
+  final T value;
+  final List<T> options;
+  final String Function(T) label;
+  final String tooltip;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) => PopupMenuButton<T>(
+    tooltip: tooltip,
     initialValue: value,
     onSelected: onChanged,
     position: PopupMenuPosition.under,
     itemBuilder: (context) => [
-      for (final o in _ChannelSet.options)
+      for (final o in options)
         PopupMenuItem(
           value: o,
           height: 32,
-          child: Text(o.label, style: const TextStyle(fontSize: 12)),
+          child: Text(label(o), style: const TextStyle(fontSize: 12)),
         ),
     ],
     child: Container(
@@ -789,7 +896,7 @@ class _ChannelSetPicker extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            value.label,
+            label(value),
             style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _ink),
           ),
           const SizedBox(width: 6),

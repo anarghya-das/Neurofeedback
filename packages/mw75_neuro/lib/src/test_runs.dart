@@ -9,7 +9,7 @@ import 'stream_processor.dart';
 ///
 /// Each run gets a folder under [directory] named after its kind and start
 /// time, holding `run.json` (settings and results, enough to pool it again
-/// later) and `eeg.csv` (every EEG sample recorded during the run).
+/// later) and `eeg.csv` (every EEG sample recorded during the run, unfiltered).
 class TestRunStore {
   TestRunStore(this.directory);
 
@@ -61,8 +61,9 @@ class RunRecorder {
   final IOSink _eeg;
   bool _closed = false;
 
-  /// `sample_status` uses [SampleStatus]: 0 measured, 1 interpolated,
-  /// 2 measured after a long dropout.
+  /// Writes the EEG as measured, before the stream's filters, so the file can
+  /// be filtered any way afterwards. `sample_status` uses [SampleStatus]:
+  /// 0 measured, 1 interpolated, 2 measured after a long dropout.
   void addSamples(List<Mw75Sample> samples) {
     if (_closed) return;
     final out = StringBuffer();
@@ -71,7 +72,7 @@ class RunRecorder {
       for (var c = 0; c < Mw75Protocol.eegChannelCount; c++) {
         out
           ..write(',')
-          ..write(s.values[c].toStringAsFixed(3));
+          ..write(s.raw[c].toStringAsFixed(3));
       }
       out
         ..write(',')

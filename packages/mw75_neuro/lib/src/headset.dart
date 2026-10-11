@@ -4,6 +4,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'eeg_filters.dart';
 import 'gaia.dart';
 import 'lsl_eeg_outlet.dart';
 import 'protocol.dart';
@@ -92,9 +93,20 @@ class Mw75Headset extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool get removeDcOffset => _processor.removeDcOffset;
-  set removeDcOffset(bool value) {
-    _processor.removeDcOffset = value;
+  /// Filters for the live EEG: the plots always, and the LSL stream only when
+  /// [EegFilterSettings.applyToLsl] is on (off by default). On by default:
+  /// Research Kit's 0.5 Hz high-pass and a 60 Hz notch. Tests and saved recordings use the
+  /// unfiltered samples ([Mw75Sample.raw]).
+  EegFilterSettings get filters => _processor.filters;
+
+  /// Where the notch found mains interference, in Hz on the stream's clock
+  /// (it can differ from 50/60 by a fraction of a percent; see [MainsTracker]),
+  /// or null until found.
+  double? get mainsHz => _processor.mainsHz;
+  set filters(EegFilterSettings value) {
+    if (value == _processor.filters) return;
+    _processor.filters = value;
+    if (_outlet != null) _log('Filters changed while streaming: ${_lslFilterNote(value)}');
     notifyListeners();
   }
 
@@ -108,7 +120,7 @@ class Mw75Headset extends ChangeNotifier {
   final _parser = Mw75PacketParser();
   final _gaia = GaiaFrameParser();
   final _quality = Mw75SignalQualityEstimator();
-  final _processor = Mw75StreamProcessor();
+  final _processor = Mw75StreamProcessor(filters: const EegFilterSettings());
   final _recentLoss = LossWindow();
   final _waiters = <_ReplyWaiter>[];
   LslEegOutlet? _outlet;
@@ -329,10 +341,12 @@ class Mw75Headset extends ChangeNotifier {
       // LabRecorder treats this as the same source.
       sourceId: normalizeAddress(device.address),
       nominalRate: Mw75Protocol.samplingRate,
-      extraDesc: const {
+      extraDesc: {
         'manufacturer': 'NeurableStream',
         'sampleStatusCodes': '0 = measured; 1 = lost over Bluetooth and interpolated; '
             '2 = measured after more than 0.5 s without data (samples lost before it may be undercounted)',
+        // As at the start of the stream; later changes are in the app's log.
+        'filters': _lslFilterNote(filters),
       },
       channels: [
         for (var i = 1; i <= Mw75Protocol.eegChannelCount; i++)
@@ -397,7 +411,11 @@ class Mw75Headset extends ChangeNotifier {
     if (report != null) quality = report;
     final out = _processor.add(packet);
     if (out.isEmpty) return;
-    _outlet?.pushChunk([for (final s in out) s.values], [for (final s in out) s.time]);
+    final lslRaw = !_processor.filters.applyToLsl;
+    _outlet?.pushChunk([
+      for (final s in out)
+        if (lslRaw && !identical(s.raw, s.values)) [...s.raw, s.values[14], s.values[15]] else s.values,
+    ], [for (final s in out) s.time]);
     if (_samples.hasListener) _samples.add(out);
   }
 
@@ -479,6 +497,9 @@ class Mw75Headset extends ChangeNotifier {
     }
     if (kDebugMode) debugPrint('[mw75] $message');
   }
+
+  static String _lslFilterNote(EegFilterSettings f) =>
+      f.applyToLsl ? '${f.describe()} (causal)' : 'none (the app filters only its own plots: ${f.describe()})';
 
   static String _describe(Object e) => e is PlatformException ? e.message ?? e.code : e.toString();
 

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../protocol.dart';
 import '../signal_quality.dart';
 
 /// Colours from Neurable Research Kit (Tailwind v4 palette, converted to sRGB).
@@ -118,8 +119,8 @@ class EarCupQualityMap extends StatelessWidget {
 /// Electrodes in the order Research Kit places them, clockwise from the top
 /// right of each cushion.
 const _layout = {
-  EarSide.left: ['2', '3', '4', 'R', '5', 'R', '6', '1'],
-  EarSide.right: ['7', '12', 'D', '11', 'D', '10', '9', '8'],
+  EarSide.left: Mw75Montage.leftCup,
+  EarSide.right: Mw75Montage.rightCup,
 };
 
 ContactQuality? _ratingFor(String electrode, Mw75SignalQuality? q) {

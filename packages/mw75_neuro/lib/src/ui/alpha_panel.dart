@@ -45,7 +45,10 @@ class AlphaControls extends StatelessWidget {
               style: TextStyle(fontSize: 11, color: _muted, height: 1.35),
             ),
             const SizedBox(height: 14),
-            const Text('Blocks', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink)),
+            const Text(
+              'Blocks',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
+            ),
             const SizedBox(height: 6),
             SizedBox(
               width: double.infinity,
@@ -60,7 +63,9 @@ class AlphaControls extends StatelessWidget {
                   for (final n in const [4, 6, 8])
                     ButtonSegment(
                       value: n,
-                      label: Text('$n each, ${(s.copyWith(blocksPerCondition: n).duration.inSeconds / 60).toStringAsFixed(1)} min'),
+                      label: Text(
+                        '$n each, ${(s.copyWith(blocksPerCondition: n).duration.inSeconds / 60).toStringAsFixed(1)} min',
+                      ),
                     ),
                 ],
                 selected: {s.blocksPerCondition},
@@ -124,7 +129,12 @@ class AlphaControls extends StatelessWidget {
                     if (left != null)
                       Text(
                         '$left s',
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _ink, fontFeatures: _tabular),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: _ink,
+                          fontFeatures: _tabular,
+                        ),
                       ),
                   ],
                 ),
@@ -196,10 +206,7 @@ class AlphaTimeline extends StatelessWidget {
         final run = session.shownRun;
         if (run == null || run.blocks.isEmpty) {
           return const Center(
-            child: Text(
-              'Alpha power appears here as the test runs.',
-              style: TextStyle(fontSize: 12, color: _muted),
-            ),
+            child: Text('Alpha power appears here as the test runs.', style: TextStyle(fontSize: 12, color: _muted)),
           );
         }
         return RepaintBoundary(
@@ -244,7 +251,10 @@ class _TimelinePainter extends CustomPainter {
     double y(double v) => plot.bottom - plot.height * (v - lo) / (hi - lo);
     final label = TextPainter(textDirection: TextDirection.ltr);
     void text(String s, Offset at, {bool right = false, bool center = false, Color color = _muted}) {
-      label.text = TextSpan(text: s, style: TextStyle(fontSize: 10, color: color, fontFeatures: _tabular));
+      label.text = TextSpan(
+        text: s,
+        style: TextStyle(fontSize: 10, color: color, fontFeatures: _tabular),
+      );
       label.layout();
       label.paint(canvas, at + Offset(right ? -label.width : (center ? -label.width / 2 : 0), -label.height / 2));
     }
@@ -368,9 +378,16 @@ class AlphaSpectrumPanel extends StatelessWidget {
   static Widget _key(Color color, String text) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Container(width: 14, height: 3, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
+      Container(
+        width: 14,
+        height: 3,
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+      ),
       const SizedBox(width: 6),
-      Text(text, style: const TextStyle(fontSize: 11, color: _ink, fontFeatures: _tabular)),
+      Text(
+        text,
+        style: const TextStyle(fontSize: 11, color: _ink, fontFeatures: _tabular),
+      ),
     ],
   );
 }
@@ -399,7 +416,10 @@ class _SpectrumPainter extends CustomPainter {
     double y(double v) => plot.bottom - plot.height * (v - lo) / (hi - lo);
     final label = TextPainter(textDirection: TextDirection.ltr);
     void text(String t, Offset at, {bool right = false, bool center = false}) {
-      label.text = TextSpan(text: t, style: const TextStyle(fontSize: 10, color: _muted, fontFeatures: _tabular));
+      label.text = TextSpan(
+        text: t,
+        style: const TextStyle(fontSize: 10, color: _muted, fontFeatures: _tabular),
+      );
       label.layout();
       label.paint(canvas, at + Offset(right ? -label.width : (center ? -label.width / 2 : 0), -label.height / 2));
     }
@@ -412,7 +432,11 @@ class _SpectrumPainter extends CustomPainter {
     for (var d = lo; d <= hi + 1e-9; d++) {
       canvas.drawLine(Offset(plot.left, y(d)), Offset(plot.right, y(d)), grid);
       final v = math.pow(10, d).toDouble();
-      text(v >= 1 ? v.round().toString() : v.toStringAsFixed(v >= 0.1 ? 1 : 2), Offset(plot.left - 6, y(d)), right: true);
+      text(
+        v >= 1 ? v.round().toString() : v.toStringAsFixed(v >= 0.1 ? 1 : 2),
+        Offset(plot.left - 6, y(d)),
+        right: true,
+      );
     }
     text('µV²/Hz', Offset(plot.left - 6, plot.top - 1), right: true);
     for (final f in const [1.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0]) {
@@ -470,62 +494,110 @@ class _ResultTile extends StatelessWidget {
   final AlphaSummary summary;
   final bool finished;
 
+  /// Chip text and colours for a test.
+  (String, Color, Color) _verdict(double? ratio, double? p) {
+    if (p == null || ratio == null) return ('Waiting', _muted, const Color(0xFFF1F2F5));
+    if (ratio < 1 && p < 0.05) return ('Opposite', const Color(0xFFB42318), const Color(0xFFFDECEA));
+    if (p < 0.01) return ('Clear', const Color(0xFF0F7A3C), const Color(0xFFE8F8EF));
+    if (p < 0.05) return ('Likely', const Color(0xFF7A4B00), const Color(0xFFFFF7E6));
+    return (finished ? 'Not found' : 'Not yet', _muted, const Color(0xFFF1F2F5));
+  }
+
+  static String _p(double p) => 'p = ${p.toStringAsFixed(p < 0.01 ? 4 : 3)}';
+
   @override
   Widget build(BuildContext context) {
     final s = summary;
-    final ratio = s.ratio;
-    final p = s.p;
-    final (verdict, fg, bg) = p == null
-        ? ('Waiting', _muted, const Color(0xFFF1F2F5))
-        : ratio! < 1 && p < 0.05
-        ? ('Opposite', const Color(0xFFB42318), const Color(0xFFFDECEA))
-        : p < 0.01
-        ? ('Clear', const Color(0xFF0F7A3C), const Color(0xFFE8F8EF))
-        : p < 0.05
-        ? ('Likely', const Color(0xFF7A4B00), const Color(0xFFFFF7E6))
-        : (finished ? 'Not found' : 'Not yet', _muted, const Color(0xFFF1F2F5));
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: _line)),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    Widget tile(String title, String detail, double? ratio, double? p, {String? extra}) {
+      final (verdict, fg, bg) = _verdict(ratio, p);
+      return Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                const Text(
-                  'Alpha with eyes closed vs open',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _ink),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _ink),
+                  ),
                 ),
-                const SizedBox(height: 2),
-                const Text(
-                  '8–13 Hz power, median per block; permutation test across blocks',
-                  style: TextStyle(fontSize: 10.5, color: _muted),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  ratio == null
-                      ? 'Needs a block of each'
-                      : '×${ratio.toStringAsFixed(2)}'
-                            '${p == null ? '  ·  test after ${AlphaSummary.minBlocks} blocks of each' : '  ·  p = ${p.toStringAsFixed(p < 0.01 ? 4 : 3)}'}'
-                            '${s.peakHz == null || ratio <= 1 ? '' : '  ·  largest rise at ${s.peakHz!.toStringAsFixed(1)} Hz'}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: ratio == null ? FontWeight.w400 : FontWeight.w700,
-                    color: ratio == null ? _muted : _ink,
-                    fontFeatures: _tabular,
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
+                  child: Text(
+                    verdict,
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: fg),
                   ),
                 ),
               ],
             ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
-            child: Text(verdict, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: fg)),
+            const SizedBox(height: 2),
+            Text(detail, style: const TextStyle(fontSize: 10.5, color: _muted)),
+            const SizedBox(height: 4),
+            Text(
+              ratio == null
+                  ? 'Needs a block of each'
+                  : '×${ratio.toStringAsFixed(2)}'
+                        '${p == null ? '  ·  test after ${AlphaSummary.minBlocks} blocks of each' : '  ·  ${_p(p)}'}'
+                        '${extra ?? ''}',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: ratio == null ? FontWeight.w400 : FontWeight.w700,
+                color: ratio == null ? _muted : _ink,
+                fontFeatures: _tabular,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final peak = s.peakHz;
+    final broadband = s.p != null && s.p! < 0.05 && (s.ratio ?? 0) > 1 && (s.shareP == null || s.shareP! >= 0.05);
+    final band = '${AlphaSummary.shareBand.$1.round()}–${AlphaSummary.shareBand.$2.round()} Hz';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: tile(
+                'Alpha with eyes closed vs open',
+                '8–13 Hz power, median per block; permutation test across blocks',
+                s.ratio,
+                s.p,
+                extra: peak == null || (s.ratio ?? 0) <= 1
+                    ? null
+                    : '  ·  largest rise at ${peak.toStringAsFixed(1)} Hz',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: tile(
+                "Alpha's share of $band power",
+                'Rises only if alpha itself does; muscle tension raises all of it',
+                s.shareRatio,
+                s.shareP,
+              ),
+            ),
+          ],
+        ),
+        if (broadband) ...[
+          const SizedBox(height: 6),
+          const Text(
+            'Alpha power rose but its share did not: the rise is broadband, more likely muscle tension than '
+            'alpha. Relax the face and jaw and close the eyes gently.',
+            style: TextStyle(fontSize: 11, color: Color(0xFF7A4B00), height: 1.35),
           ),
         ],
-      ),
+      ],
     );
   }
 }
@@ -547,7 +619,9 @@ class AlphaChannelBars extends StatelessWidget {
     return ListenableBuilder(
       listenable: Listenable.merge([session, session.progress]),
       builder: (context, _) {
-        final summaries = [for (var c = 0; c < 12; c++) session.summary([c])];
+        final summaries = [
+          for (var c = 0; c < 12; c++) session.summary([c]),
+        ];
         Widget bar(int c) {
           final s = summaries[c];
           final ratio = s.ratio;
@@ -649,9 +723,17 @@ class AlphaChannelBars extends StatelessWidget {
             const SizedBox(height: 4),
             const Row(
               children: [
-                Expanded(child: Center(child: Text('Left cup', style: TextStyle(fontSize: 10, color: _muted)))),
+                Expanded(
+                  child: Center(
+                    child: Text('Left cup', style: TextStyle(fontSize: 10, color: _muted)),
+                  ),
+                ),
                 SizedBox(width: 12),
-                Expanded(child: Center(child: Text('Right cup', style: TextStyle(fontSize: 10, color: _muted)))),
+                Expanded(
+                  child: Center(
+                    child: Text('Right cup', style: TextStyle(fontSize: 10, color: _muted)),
+                  ),
+                ),
               ],
             ),
           ],

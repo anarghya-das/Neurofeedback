@@ -26,6 +26,7 @@ class OddballSettings {
     this.amplitude = 0.3,
     this.minInterval = 1.0,
     this.maxInterval = 1.3,
+    this.highPassHz = 0.5,
   });
 
   final int trials;
@@ -47,6 +48,11 @@ class OddballSettings {
   final double minInterval;
   final double maxInterval;
 
+  /// High-pass of the epoch filter: 0.5 Hz (wet-electrode studies go as low
+  /// as 0.1) or 1 Hz (the usual choice for dry electrodes, which drift more).
+  final double highPassHz;
+  static const highPassOptions = [0.5, 1.0];
+
   double get rareHz => rareIsHigh ? highHz : lowHz;
   double get standardHz => rareIsHigh ? lowHz : highHz;
 
@@ -63,6 +69,7 @@ class OddballSettings {
     'amplitude': amplitude,
     'minInterval': minInterval,
     'maxInterval': maxInterval,
+    'highPassHz': highPassHz,
   };
 
   factory OddballSettings.fromJson(Map<String, Object?> j) {
@@ -78,10 +85,11 @@ class OddballSettings {
       amplitude: d('amplitude', defaults.amplitude),
       minInterval: d('minInterval', defaults.minInterval),
       maxInterval: d('maxInterval', defaults.maxInterval),
+      highPassHz: d('highPassHz', defaults.highPassHz),
     );
   }
 
-  OddballSettings copyWith({int? trials, bool? rareIsHigh}) => OddballSettings(
+  OddballSettings copyWith({int? trials, bool? rareIsHigh, double? highPassHz}) => OddballSettings(
     trials: trials ?? this.trials,
     rareProbability: rareProbability,
     rareIsHigh: rareIsHigh ?? this.rareIsHigh,
@@ -91,6 +99,7 @@ class OddballSettings {
     amplitude: amplitude,
     minInterval: minInterval,
     maxInterval: maxInterval,
+    highPassHz: highPassHz ?? this.highPassHz,
   );
 }
 
@@ -296,7 +305,7 @@ class OddballSession extends ChangeNotifier {
   Listenable get progress => _progress;
   final _progress = _Ticker();
 
-  final _extractor = EpochExtractor();
+  var _extractor = EpochExtractor();
   final _random = math.Random();
   StreamSubscription<List<Mw75Sample>>? _samples;
   OddballRun? _current;
@@ -305,8 +314,9 @@ class OddballSession extends ChangeNotifier {
   Timer? _progressTimer;
   int _run = 0;
 
-  ErpSummary summary(List<int> channels, {bool tests = true}) =>
-      ErpSummary.compute(epochs, channels, rejectAbove: _rejectAbove, tests: tests);
+  /// See [ErpSummary.compute]; [minus] makes a bipolar derivation.
+  ErpSummary summary(List<int> channels, {List<int> minus = const [], bool tests = true}) =>
+      ErpSummary.compute(epochs, channels, minus: minus, rejectAbove: _rejectAbove, tests: tests);
 
   /// Adds saved runs that are not listed yet, unticked so they only count
   /// once chosen.
@@ -403,7 +413,7 @@ class OddballSession extends ChangeNotifier {
       return;
     }
     _openMarkers();
-    _extractor.clear();
+    _extractor = EpochExtractor(highPass: settings.highPassHz);
     _samples = headset.samples.listen(_onSamples);
     _progressTimer = Timer.periodic(const Duration(seconds: 1), (_) => _progress.tick());
 

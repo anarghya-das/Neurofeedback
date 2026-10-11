@@ -148,7 +148,7 @@ Tested against MW75 Neuro `50:0B:91:A9:39:84`, firmware 2.0.0.74, via `tools/mw7
 
 Same as Research Kit's (name from its config, type `EEG`, 16 × float32, nominal
 500 Hz, `source_id` = Bluetooth address, channels `eeg1`–`eeg12` in µV, `ref`,
-`drl`, `lslCumulativeCounter`), with two differences:
+`drl`, `lslCumulativeCounter`), with three differences:
 
 - **Channel 16 is `sampleStatus`** instead of Research Kit's `csvCumulativeCounter`
   (which is 0 outside Research Kit's own CSV recording): `0` measured, `1` lost over
@@ -158,6 +158,15 @@ Same as Research Kit's (name from its config, type `EEG`, 16 × float32, nominal
 - **Timestamps** follow the headset's measured rate (≈496.5 Hz on the lab unit, not
   500), anchored to the earliest packet arrivals, in `lsl_local_clock()` time
   (`CLOCK_MONOTONIC_RAW` on macOS). Research Kit stamps each sample at push time.
+- **Optional filtering**: the app's plots apply Research Kit's 0.5 Hz first-order
+  high-pass (its "DC offset" option) and a mains notch with its harmonic (Q 20) by
+  default, plus an optional 2nd/4th-order Butterworth band-pass. The LSL stream
+  carries them only if "Filter the LSL stream too" is switched on (off by default),
+  and the settings at stream start are in `desc/filters`. The filters are causal. The
+  notch centres itself on the measured line-noise peak, which on the lab headset sits
+  at 0.1204 cycles/sample (59.7–59.8 Hz on the app's rate estimate), not exactly at
+  60 Hz. The bench app's tests and their saved `eeg.csv` always use the unfiltered
+  samples.
 
 Measured loss on the lab headset: ~13% with no audio, ~44% while music plays
 through the headset (A2DP shares the Bluetooth link).

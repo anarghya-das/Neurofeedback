@@ -15,7 +15,14 @@ const _rate = 496.5;
 
 /// [seconds] of 12-channel EEG: white noise plus a 10 Hz rhythm of
 /// [alphaAmplitude] µV on every channel, on top of a 20 mV offset.
-List<Mw75Sample> _eeg(double seconds, {required double alphaAmplitude, required double t0, required math.Random random, int loseEvery = 0}) {
+List<Mw75Sample> _eeg(
+  double seconds, {
+  required double alphaAmplitude,
+  required double t0,
+  required math.Random random,
+  int loseEvery = 0,
+  double noise = 5,
+}) {
   double gauss() => math.sqrt(-2 * math.log(1 - random.nextDouble())) * math.cos(2 * math.pi * random.nextDouble());
   final n = (seconds * _rate).round();
   return [
@@ -23,8 +30,11 @@ List<Mw75Sample> _eeg(double seconds, {required double alphaAmplitude, required 
       Mw75Sample(
         [
           for (var c = 0; c < 12; c++)
-            20000 + alphaAmplitude * math.sin(2 * math.pi * 10 * (t0 + i / _rate) + c) + 5 * gauss(),
-          0, 0, i.toDouble(), 0,
+            20000 + alphaAmplitude * math.sin(2 * math.pi * 10 * (t0 + i / _rate) + c) + noise * gauss(),
+          0,
+          0,
+          i.toDouble(),
+          0,
         ],
         t0 + i / _rate,
         status: loseEvery > 0 && i % loseEvery == 0 ? SampleStatus.interpolated : SampleStatus.measured,
@@ -33,7 +43,14 @@ List<Mw75Sample> _eeg(double seconds, {required double alphaAmplitude, required 
 }
 
 /// Six eyes-open and six eyes-closed blocks, analysed the way a run is.
-List<AlphaBlock> _blocks({required double openAlpha, required double closedAlpha, int seed = 1}) {
+/// [closedNoise] stands in for muscle tension with the eyes closed: broadband
+/// power that raises alpha power without being alpha.
+List<AlphaBlock> _blocks({
+  required double openAlpha,
+  required double closedAlpha,
+  int seed = 1,
+  double closedNoise = 5,
+}) {
   final random = math.Random(seed);
   final blocks = <AlphaBlock>[];
   for (var b = 0; b < 12; b++) {
@@ -41,7 +58,13 @@ List<AlphaBlock> _blocks({required double openAlpha, required double closedAlpha
     final block = AlphaBlock(eyesClosed: closed, cue: b * 20.0, bins: AlphaWindowAnalyzer.binsFor(_rate));
     final analyzer = AlphaWindowAnalyzer();
     for (final w in analyzer.add(
-      _eeg(16, alphaAmplitude: closed ? closedAlpha : openAlpha, t0: b * 20.0 + 4, random: random),
+      _eeg(
+        16,
+        alphaAmplitude: closed ? closedAlpha : openAlpha,
+        t0: b * 20.0 + 4,
+        random: random,
+        noise: closed ? closedNoise : 5,
+      ),
       sampleRate: _rate,
     )) {
       block.add(w);
@@ -77,7 +100,10 @@ void main() {
     test('skips windows that are mostly interpolated or span a gap', () {
       final random = math.Random(3);
       final analyzer = AlphaWindowAnalyzer();
-      expect(analyzer.add(_eeg(3, alphaAmplitude: 10, t0: 0, random: random, loseEvery: 1), sampleRate: _rate), isEmpty);
+      expect(
+        analyzer.add(_eeg(3, alphaAmplitude: 10, t0: 0, random: random, loseEvery: 1), sampleRate: _rate),
+        isEmpty,
+      );
       analyzer.clear();
       final before = _eeg(1.5, alphaAmplitude: 10, t0: 0, random: random);
       final after = _eeg(1.5, alphaAmplitude: 10, t0: 1.8, random: random);
@@ -89,6 +115,25 @@ void main() {
   });
 
   group('AlphaSummary', () {
+    test("tells alpha apart from a broadband rise by alpha's share", () {
+      final real = AlphaSummary.compute(_blocks(openAlpha: 3, closedAlpha: 10), [0, 1, 2], binHz: _rate / 512);
+      // Alpha already makes up most of this synthetic 2–30 Hz band (no 1/f
+      // background), so its share can only rise so far.
+      expect(real.shareRatio, greaterThan(1.2));
+      expect(real.shareP, lessThan(0.01));
+
+      // Eyes closed adds only broadband power: alpha power rises, its share does not.
+      final muscle = AlphaSummary.compute(_blocks(openAlpha: 3, closedAlpha: 3, closedNoise: 12), [
+        0,
+        1,
+        2,
+      ], binHz: _rate / 512);
+      expect(muscle.ratio, greaterThan(1.3));
+      expect(muscle.p, lessThan(0.01));
+      expect(muscle.shareRatio, lessThan(1));
+      expect(muscle.shareP == null || muscle.shareP! >= 0.05 || muscle.shareRatio! < 1, isTrue);
+    });
+
     test('finds the eyes-closed rise, its size and its frequency', () {
       final s = AlphaSummary.compute(_blocks(openAlpha: 3, closedAlpha: 10), [0, 1, 2], binHz: _rate / 512);
       expect(s.openBlocks, 6);
@@ -236,13 +281,23 @@ void main() {
                   Expanded(
                     child: Column(
                       children: [
-                        Expanded(flex: 2, child: card('Alpha over time', AlphaTimeline(session: session, channels: all), expand: true)),
+                        Expanded(
+                          flex: 2,
+                          child: card('Alpha over time', AlphaTimeline(session: session, channels: all), expand: true),
+                        ),
                         const SizedBox(height: 14),
-                        Expanded(flex: 3, child: card('Spectrum', AlphaSpectrumPanel(session: session, channels: all), expand: true)),
+                        Expanded(
+                          flex: 3,
+                          child: card('Spectrum', AlphaSpectrumPanel(session: session, channels: all), expand: true),
+                        ),
                         const SizedBox(height: 14),
                         Expanded(
                           flex: 2,
-                          child: card('Each channel', AlphaChannelBars(session: session, selected: 4, onSelected: (_) {}), expand: true),
+                          child: card(
+                            'Each channel',
+                            AlphaChannelBars(session: session, selected: 4, onSelected: (_) {}),
+                            expand: true,
+                          ),
                         ),
                       ],
                     ),
@@ -256,7 +311,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.text('Clear'), findsOneWidget);
+    expect(find.text('Clear'), findsNWidgets(2));
     final renderPath = Platform.environment['MW75_RENDER'];
     if (renderPath == null) return;
     await tester.runAsync(() async {

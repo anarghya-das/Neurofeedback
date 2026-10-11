@@ -47,7 +47,9 @@ class OddballControls extends StatelessWidget {
             _label('Play tones through'),
             Row(
               children: [
-                Expanded(child: _OutputPicker(session: session, enabled: !busy)),
+                Expanded(
+                  child: _OutputPicker(session: session, enabled: !busy),
+                ),
                 const SizedBox(width: 8),
                 Tooltip(
                   message: 'Reload audio outputs',
@@ -133,6 +135,20 @@ class OddballControls extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 10),
+            _Dropdown<int>(
+              label: 'High-pass for the responses',
+              // Tenths of a hertz, so the keys compare exactly.
+              value: (s.highPassHz * 10).round(),
+              enabled: !busy,
+              items: {
+                for (final hz in OddballSettings.highPassOptions)
+                  (hz * 10).round(): hz == 0.5
+                      ? '0.5 Hz (keeps more of the slow P300)'
+                      : '1 Hz (dry-electrode convention)',
+              },
+              onChanged: (v) => session.settings = s.copyWith(highPassHz: v / 10),
+            ),
             const SizedBox(height: 14),
             Row(
               children: [
@@ -215,7 +231,8 @@ class OddballControls extends StatelessWidget {
                     onChanged: identical(r, session.current) ? null : (v) => session.setIncluded(r, v),
                     detail:
                         '${r.trialsPlayed} tones, rare ${r.settings.rareIsHigh ? 'high' : 'low'} '
-                        '(${r.settings.rareHz.round()} Hz) · ${r.output ?? 'unknown output'}',
+                        '(${r.settings.rareHz.round()} Hz) · ${r.output ?? 'unknown output'}'
+                        '${r.settings.highPassHz == 0.5 ? '' : ' · ${r.settings.highPassHz} Hz high-pass'}',
                   ),
               ],
             ),
@@ -234,33 +251,38 @@ class OddballControls extends StatelessWidget {
     if (s.epochs.isEmpty && lost == 0) return 'No responses in the results yet.';
     final parts = ['$standard standard and $rare rare responses'];
     if (lost > 0) {
-      parts.add(
-        '$lost unusable (${[for (final e in s.rejections.entries) '${e.value} ${e.key.label}'].join(', ')})',
-      );
+      parts.add('$lost unusable (${[for (final e in s.rejections.entries) '${e.value} ${e.key.label}'].join(', ')})');
     }
     return parts.join('; ');
   }
 
   static Widget _label(String text) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
-    child: Text(text, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink)),
+    child: Text(
+      text,
+      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
+    ),
   );
 }
 
 /// The average response for [channels]: standard and rare traces with ±1 SE
 /// bands, their difference, and the two tests.
 class ErpPanel extends StatelessWidget {
-  const ErpPanel({super.key, required this.session, required this.channels});
+  const ErpPanel({super.key, required this.session, required this.channels, this.minus = const []});
 
   final OddballSession session;
   final List<int> channels;
+
+  /// Subtracted from [channels] for a bipolar derivation; see
+  /// [ErpSummary.compute].
+  final List<int> minus;
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: Listenable.merge([session, session.progress]),
       builder: (context, _) {
-        final summary = session.summary(channels);
+        final summary = session.summary(channels, minus: minus);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -274,7 +296,7 @@ class ErpPanel extends StatelessWidget {
                 Expanded(
                   child: _TestTile(
                     title: 'Response to every tone',
-                    detail: 'Mean 80–150 ms after onset (auditory N1) vs zero',
+                    detail: 'Mean ${_ms(ErpSummary.responseWindow)} after onset (auditory N1) vs zero',
                     test: summary.response,
                     needs: 'Needs ${ErpSummary.minTrials} responses',
                     finished: !session.busy,
@@ -284,7 +306,7 @@ class ErpPanel extends StatelessWidget {
                 Expanded(
                   child: _TestTile(
                     title: 'Rare vs standard',
-                    detail: 'Rare minus standard, 250–500 ms (P300)',
+                    detail: 'Rare minus standard, ${_ms(ErpSummary.oddballWindow)} (P300)',
                     test: summary.oddball,
                     needs: 'Needs ${ErpSummary.minRare} rare and ${ErpSummary.minRare} standard',
                     finished: !session.busy,
@@ -314,7 +336,9 @@ class ErpChannelGrid extends StatelessWidget {
     return ListenableBuilder(
       listenable: Listenable.merge([session, session.progress]),
       builder: (context, _) {
-        final summaries = [for (var c = 0; c < 12; c++) session.summary([c], tests: false)];
+        final summaries = [
+          for (var c = 0; c < 12; c++) session.summary([c], tests: false),
+        ];
         // One scale for every tile, so sizes compare across channels.
         final range = ErpPlot.niceRange(summaries.fold(0.0, (m, s) => math.max(m, s.peak)));
         Widget tile(int c) {
@@ -343,7 +367,10 @@ class ErpChannelGrid extends StatelessWidget {
                         // overflowing.
                         Row(
                           children: [
-                            Text('Ch${c + 1}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: _ink)),
+                            Text(
+                              'Ch${c + 1}',
+                              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: _ink),
+                            ),
                             if (effect != null)
                               Expanded(
                                 child: Text(
@@ -357,7 +384,9 @@ class ErpChannelGrid extends StatelessWidget {
                               ),
                           ],
                         ),
-                        Expanded(child: ErpPlot(summary: s, range: range, compact: true)),
+                        Expanded(
+                          child: ErpPlot(summary: s, range: range, compact: true),
+                        ),
                       ],
                     ),
                   ),
@@ -372,7 +401,10 @@ class ErpChannelGrid extends StatelessWidget {
             children: [
               SizedBox(
                 width: 34,
-                child: Text(side, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: _muted)),
+                child: Text(
+                  side,
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: _muted),
+                ),
               ),
               for (final c in channels) tile(c),
             ],
@@ -383,7 +415,7 @@ class ErpChannelGrid extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Same scale, ±${_scale(range)} µV. Number: rare minus standard, 250–500 ms. '
+              'Same scale, ±${_scale(range)} µV. Number: rare minus standard, ${_ms(ErpSummary.oddballWindow)}. '
               'Picking the best-looking channel after the fact overstates the evidence.',
               style: const TextStyle(fontSize: 10.5, color: _muted),
             ),
@@ -450,8 +482,18 @@ class _ErpPainter extends CustomPainter {
     double x(double t) => plot.left + plot.width * (t - ErpEpoch.start) / (ErpEpoch.end - ErpEpoch.start);
     double y(double v) => plot.center.dy - v / range * plot.height / 2;
     final label = TextPainter(textDirection: TextDirection.ltr);
-    void text(String s, Offset at, {Color color = _muted, double fontSize = 10, bool right = false, bool center = false}) {
-      label.text = TextSpan(text: s, style: TextStyle(fontSize: fontSize, color: color, fontFeatures: _tabular));
+    void text(
+      String s,
+      Offset at, {
+      Color color = _muted,
+      double fontSize = 10,
+      bool right = false,
+      bool center = false,
+    }) {
+      label.text = TextSpan(
+        text: s,
+        style: TextStyle(fontSize: fontSize, color: color, fontFeatures: _tabular),
+      );
       label.layout();
       final dx = right ? -label.width : (center ? -label.width / 2 : 0.0);
       label.paint(canvas, at + Offset(dx, -label.height / 2));
@@ -535,6 +577,9 @@ class _ErpPainter extends CustomPainter {
       old.summary != summary || old.range != range || old.compact != compact;
 }
 
+/// "300–600 ms" for a window in seconds.
+String _ms((double, double) window) => '${(window.$1 * 1000).round()}–${(window.$2 * 1000).round()} ms';
+
 String _scale(double v) => v >= 10 || v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
 
 class _Legend extends StatelessWidget {
@@ -549,9 +594,16 @@ class _Legend extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(width: 14, height: 3, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
+          Container(
+            width: 14,
+            height: 3,
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+          ),
           const SizedBox(width: 6),
-          Text(text, style: const TextStyle(fontSize: 11, color: _ink, fontFeatures: _tabular)),
+          Text(
+            text,
+            style: const TextStyle(fontSize: 11, color: _ink, fontFeatures: _tabular),
+          ),
         ],
       ),
     );
@@ -603,19 +655,28 @@ class _TestTile extends StatelessWidget {
         : (finished ? 'Not found' : 'Not yet', _muted, const Color(0xFFF1F2F5));
     return Container(
       padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: _line)),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _line),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Expanded(
-                child: Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _ink)),
+                child: Text(
+                  title,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _ink),
+                ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
-                child: Text(verdict, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: fg)),
+                child: Text(
+                  verdict,
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: fg),
+                ),
               ),
             ],
           ),
@@ -674,11 +735,12 @@ class _OutputPicker extends StatelessWidget {
               ),
             ),
             for (final d in outputs)
-              DropdownMenuItem(value: d.id, child: Text(d.name, overflow: TextOverflow.ellipsis)),
+              DropdownMenuItem(
+                value: d.id,
+                child: Text(d.name, overflow: TextOverflow.ellipsis),
+              ),
           ],
-          onChanged: enabled
-              ? (id) => session.output = outputs.where((d) => d.id == id).firstOrNull
-              : null,
+          onChanged: enabled ? (id) => session.output = outputs.where((d) => d.id == id).firstOrNull : null,
         ),
       ),
     );
@@ -704,7 +766,10 @@ class _Dropdown<T> extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink)),
+      Text(
+        label,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
+      ),
       const SizedBox(height: 6),
       Container(
         height: 34,
@@ -721,7 +786,10 @@ class _Dropdown<T> extends StatelessWidget {
             style: const TextStyle(fontSize: 12, color: _ink),
             items: [
               for (final e in items.entries)
-                DropdownMenuItem(value: e.key, child: Text(e.value, overflow: TextOverflow.ellipsis)),
+                DropdownMenuItem(
+                  value: e.key,
+                  child: Text(e.value, overflow: TextOverflow.ellipsis),
+                ),
             ],
             onChanged: enabled
                 ? (v) {

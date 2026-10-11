@@ -155,3 +155,25 @@ class Mw75PacketParser {
     return bytes;
   }
 }
+
+/// Electrode pairs on the ear cups, 0-based channel indices.
+///
+/// Positions come from the ear-cup diagram Research Kit draws (eight sensors
+/// 45° apart, clockwise from the top: left cup Ch2, Ch3, Ch4, Ref, Ch5, Ref,
+/// Ch6, Ch1; right cup Ch7, Ch12, DRL, Ch11, DRL, Ch10, Ch9, Ch8). Each pair
+/// is a top electrode and the one diametrically opposite it at the bottom:
+/// the vertical, widest-spaced kind of pair that around-the-ear EEG studies
+/// (cEEGrid) find carries the P300 best.
+abstract final class Mw75Montage {
+  /// Sensors on each cushion as Research Kit draws them: eight positions 45°
+  /// apart, clockwise from just right of the top. Digits are channel numbers
+  /// (1-based), R the reference and D the driven right leg.
+  static const leftCup = ['2', '3', '4', 'R', '5', 'R', '6', '1'];
+  static const rightCup = ['7', '12', 'D', '11', 'D', '10', '9', '8'];
+
+  /// Ch2 (top) minus Ch5 (bottom).
+  static const leftTop = 1, leftBottom = 4;
+
+  /// Ch8 (top) minus Ch11 (bottom).
+  static const rightTop = 7, rightBottom = 10;
+}

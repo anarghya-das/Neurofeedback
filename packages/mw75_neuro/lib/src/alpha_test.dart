@@ -94,7 +94,7 @@ class AlphaWindowAnalyzer {
       _times.add(s.time);
       _status.add(s.status);
       for (var c = 0; c < channelCount; c++) {
-        _channels[c].add(s.values[c]);
+        _channels[c].add(s.raw[c]);
       }
       if (++_sinceLast >= hop && _times.length >= size) {
         _sinceLast = 0;
@@ -156,8 +156,12 @@ double bandPower(List<double> psd, double binHz, double low, double high) {
 
 /// One eyes-open or eyes-closed block and the windows analysed in it.
 class AlphaBlock {
-  AlphaBlock({required this.eyesClosed, required this.cue, required int bins, int channels = Mw75Protocol.eegChannelCount})
-    : spectrumSum = List.generate(channels, (_) => Float64List(bins));
+  AlphaBlock({
+    required this.eyesClosed,
+    required this.cue,
+    required int bins,
+    int channels = Mw75Protocol.eegChannelCount,
+  }) : spectrumSum = List.generate(channels, (_) => Float64List(bins));
 
   final bool eyesClosed;
 
@@ -263,7 +267,8 @@ class AlphaRun {
       included: false,
     )..folder = folder;
     run.blocks.addAll([
-      for (final b in (j['blocks'] as List).cast<Map<Object?, Object?>>()) AlphaBlock.fromJson(b.cast<String, Object?>()),
+      for (final b in (j['blocks'] as List).cast<Map<Object?, Object?>>())
+        AlphaBlock.fromJson(b.cast<String, Object?>()),
     ]);
     for (final row in (j['timeline'] as List? ?? const []).cast<List<Object?>>()) {
       run.timeline.add((
@@ -286,7 +291,13 @@ class AlphaSummary {
     required this.ratio,
     required this.p,
     required this.peakHz,
+    required this.shareRatio,
+    required this.shareP,
   });
+
+  /// Alpha's share is measured against this band: wide enough to include the
+  /// 15–30 Hz range where muscle tension shows up.
+  static const shareBand = (2.0, 30.0);
 
   /// Fewest windows (~0.5 s apart) for a block to count.
   static const minWindows = 5;
@@ -303,6 +314,9 @@ class AlphaSummary {
   factory AlphaSummary.compute(List<AlphaBlock> blocks, List<int> channels, {required double binHz}) {
     final open = <double>[];
     final closed = <double>[];
+    // log10 of alpha's share of [shareBand] power, per block.
+    final openShare = <double>[];
+    final closedShare = <double>[];
     Float64List? openSum, closedSum;
     var openWindows = 0, closedWindows = 0;
     for (final b in blocks) {
@@ -313,10 +327,18 @@ class AlphaSummary {
       (b.eyesClosed ? closed : open).add(_median(values));
       final bins = b.spectrumSum.first.length;
       final sum = b.eyesClosed ? (closedSum ??= Float64List(bins)) : (openSum ??= Float64List(bins));
+      var alphaPower = 0.0, bandPower = 0.0;
       for (final c in channels) {
         for (var k = 0; k < math.min(bins, sum.length); k++) {
-          sum[k] += b.spectrumSum[c][k];
+          final v = b.spectrumSum[c][k];
+          sum[k] += v;
+          final f = k * binHz;
+          if (f >= EegBand.alpha.low && f < EegBand.alpha.high) alphaPower += v;
+          if (f >= shareBand.$1 && f < shareBand.$2) bandPower += v;
         }
+      }
+      if (alphaPower > 0 && bandPower > 0) {
+        (b.eyesClosed ? closedShare : openShare).add(math.log(alphaPower / bandPower) / math.ln10);
       }
       if (b.eyesClosed) {
         closedWindows += b.windows;
@@ -329,7 +351,13 @@ class AlphaSummary {
     final openSpectrum = mean(openSum, openWindows);
     final closedSpectrum = mean(closedSum, closedWindows);
 
-    double? ratio, p, peakHz;
+    double? ratio, p, peakHz, shareRatio, shareP;
+    if (openShare.isNotEmpty && closedShare.isNotEmpty) {
+      shareRatio = math.pow(10, _mean(closedShare) - _mean(openShare)).toDouble();
+      if (openShare.length >= minBlocks && closedShare.length >= minBlocks) {
+        shareP = _permutationP(closedShare, openShare);
+      }
+    }
     if (open.isNotEmpty && closed.isNotEmpty) {
       ratio = math.pow(10, _mean(closed) - _mean(open)).toDouble();
       if (open.length >= minBlocks && closed.length >= minBlocks) p = _permutationP(closed, open);
@@ -354,6 +382,8 @@ class AlphaSummary {
       ratio: ratio,
       p: p,
       peakHz: peakHz,
+      shareRatio: shareRatio,
+      shareP: shareP,
     );
   }
 
@@ -373,6 +403,14 @@ class AlphaSummary {
 
   /// Frequency (7–14 Hz) where eyes closed raised power the most.
   final double? peakHz;
+
+  /// Eyes closed ÷ eyes open for alpha's share of [shareBand] power, from each
+  /// block's mean spectrum. Real alpha raises the share; a broadband rise in
+  /// power (muscle tension, movement) raises alpha power without it.
+  final double? shareRatio;
+
+  /// Two-sided permutation p-value for [shareRatio], as for [p].
+  final double? shareP;
 
   static double _mean(List<double> v) => v.fold(0.0, (a, b) => a + b) / v.length;
 
@@ -571,9 +609,7 @@ class AlphaSession extends ChangeNotifier {
       final closed = i.isOdd;
       final cue = LslEegOutlet.localClock();
       current.blocks.lastOrNull?.end = cue;
-      current.blocks.add(
-        AlphaBlock(eyesClosed: closed, cue: cue, bins: AlphaWindowAnalyzer.binsFor(rate)),
-      );
+      current.blocks.add(AlphaBlock(eyesClosed: closed, cue: cue, bins: AlphaWindowAnalyzer.binsFor(rate)));
       blockEndsAt = cue + settings.blockSeconds;
       unawaited(_say(closed ? 'Close your eyes.' : (i == 0 ? 'Eyes open.' : 'Open your eyes.')));
       _setStatus(closed ? 'Eyes closed. Relax and keep still.' : 'Eyes open. Look at one spot and relax.');
@@ -584,7 +620,11 @@ class AlphaSession extends ChangeNotifier {
     _setState(AlphaState.finishing, 'Collecting the last of the EEG…');
     // Samples reach the app a few hundred milliseconds after they are taken.
     if (!await _waitUntil(LslEegOutlet.localClock() + 1.5, run)) return;
-    final s = AlphaSummary.compute(current.blocks, List.generate(Mw75Protocol.eegChannelCount, (i) => i), binHz: current.binHz);
+    final s = AlphaSummary.compute(
+      current.blocks,
+      List.generate(Mw75Protocol.eegChannelCount, (i) => i),
+      binHz: current.binHz,
+    );
     await _end(
       run,
       s.ratio == null
@@ -674,7 +714,8 @@ class AlphaSession extends ChangeNotifier {
 
   static final _noBlock = AlphaBlock(eyesClosed: false, cue: 0, bins: 0, channels: 0);
 
-  Future<void> _say(String text) => _voice.speak(text).catchError((Object e) => debugPrint('[alpha] speech failed: $e'));
+  Future<void> _say(String text) =>
+      _voice.speak(text).catchError((Object e) => debugPrint('[alpha] speech failed: $e'));
 
   void _setState(AlphaState state, String status) {
     _state = state;

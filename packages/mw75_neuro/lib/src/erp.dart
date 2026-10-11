@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'biquad.dart';
 import 'protocol.dart';
 import 'stream_processor.dart';
 
@@ -64,7 +65,11 @@ class EpochOutcome {
 /// then trimmed, so filter edge effects fall outside the epoch. An epoch is
 /// therefore ready [ErpEpoch.end] + [padding] seconds after its tone.
 class EpochExtractor {
-  EpochExtractor({this.channelCount = Mw75Protocol.eegChannelCount, this.maxLostFraction = 0.5});
+  EpochExtractor({
+    this.channelCount = Mw75Protocol.eegChannelCount,
+    this.maxLostFraction = 0.5,
+    this.highPass = 0.5,
+  });
 
   static const padding = 1.0;
   static const _gridRate = 500;
@@ -82,7 +87,10 @@ class EpochExtractor {
   final _status = <int>[];
   late final _channels = List.generate(channelCount, (_) => <double>[]);
   final _pending = <StimulusEvent>[];
-  final _filter = ErpFilter(rate: _gridRate.toDouble());
+  /// High-pass cut-off, Hz. 0.5 keeps more of the slow P300; 1 is the usual
+  /// choice for dry electrodes, which drift more.
+  final double highPass;
+  late final _filter = ErpFilter(highPass: highPass, rate: _gridRate.toDouble());
 
   void addEvent(StimulusEvent event) => _pending.add(event);
 
@@ -92,7 +100,8 @@ class EpochExtractor {
       _times.add(s.time);
       _status.add(s.status);
       for (var c = 0; c < channelCount; c++) {
-        _channels[c].add(s.values[c]);
+        // Unfiltered: the stream's causal filters would shift latencies.
+        _channels[c].add(s.raw[c]);
       }
     }
     final outcomes = <EpochOutcome>[];
@@ -220,62 +229,22 @@ class EpochExtractor {
 class ErpFilter {
   ErpFilter({this.highPass = 0.5, this.lowPass = 20, this.rate = 500})
     : _stages = [
-        _Biquad.butterworth(highPass, rate, math.sqrt1_2, high: true),
-        _Biquad.butterworth(lowPass, rate, 0.5411961001461970, high: false),
-        _Biquad.butterworth(lowPass, rate, 1.3065629648763766, high: false),
+        Biquad.highPass(highPass, rate, Biquad.butterworthQs(2).single),
+        for (final q in Biquad.butterworthQs(4)) Biquad.lowPass(lowPass, rate, q),
       ];
 
   final double highPass;
   final double lowPass;
   final double rate;
-  final List<_Biquad> _stages;
+  final List<Biquad> _stages;
 
   /// Filters [x] in place.
   void apply(Float64List x) {
     for (final s in _stages) {
-      s.run(x, forward: true);
+      s.run(x);
     }
     for (final s in _stages) {
       s.run(x, forward: false);
-    }
-  }
-}
-
-class _Biquad {
-  _Biquad(this.b0, this.b1, this.b2, this.a1, this.a2);
-
-  /// One second-order section (RBJ cookbook, bilinear transform with
-  /// prewarping); cascading sections with Butterworth Q values gives a
-  /// Butterworth response.
-  factory _Biquad.butterworth(double cutoff, double rate, double q, {required bool high}) {
-    final w = 2 * math.pi * cutoff / rate;
-    final c = math.cos(w);
-    final alpha = math.sin(w) / (2 * q);
-    final a0 = 1 + alpha;
-    final b0 = (high ? 1 + c : 1 - c) / 2;
-    final b1 = high ? -(1 + c) : 1 - c;
-    return _Biquad(b0 / a0, b1 / a0, b0 / a0, -2 * c / a0, (1 - alpha) / a0);
-  }
-
-  final double b0, b1, b2, a1, a2;
-
-  /// Filters in place (transposed direct form II), starting from the steady
-  /// state for the first value, as if the signal had always been there, so
-  /// there is no start-up transient.
-  void run(Float64List x, {required bool forward}) {
-    final n = x.length;
-    if (n == 0) return;
-    final first = forward ? x[0] : x[n - 1];
-    final gain = (b0 + b1 + b2) / (1 + a1 + a2);
-    var z2 = (b2 - a2 * gain) * first;
-    var z1 = (b1 - a1 * gain) * first + z2;
-    for (var k = 0; k < n; k++) {
-      final i = forward ? k : n - 1 - k;
-      final v = x[i];
-      final y = b0 * v + z1;
-      z1 = b1 * v - a1 * y + z2;
-      z2 = b2 * v - a2 * y;
-      x[i] = y;
     }
   }
 }
@@ -323,14 +292,18 @@ class ErpSummary {
   /// Auditory N1, the brain's first large response to any sound.
   static const responseWindow = (0.08, 0.15);
 
-  /// P300, larger for the rare tone when it is noticed.
-  static const oddballWindow = (0.25, 0.5);
+  /// P300, larger for the rare tone when it is noticed. Around the ear it
+  /// peaks later than on the scalp (≈400 ms in Debener et al. 2015, ≈500 ms
+  /// in Eidel et al. 2024, both cEEGrid), hence a window reaching 600 ms.
+  static const oddballWindow = (0.3, 0.6);
 
   /// Fewest epochs before a test is run.
   static const minTrials = 10;
   static const minRare = 5;
 
-  /// Averages [epochs] over [channels]. Epochs whose channel average spans
+  /// Averages [epochs] over [channels], or, with [minus], the mean of
+  /// [channels] minus the mean of [minus] (a bipolar derivation such as an
+  /// ear cup's top electrode minus its bottom one). Epochs whose trace spans
   /// more than [rejectAbove] µV (eye movements, jaw clenches) are left out.
   ///
   /// With [tests], also runs two permutation tests: whether the mean in
@@ -340,6 +313,7 @@ class ErpSummary {
   factory ErpSummary.compute(
     List<ErpEpoch> epochs,
     List<int> channels, {
+    List<int> minus = const [],
     double? rejectAbove,
     bool tests = true,
     int permutations = 2000,
@@ -348,7 +322,7 @@ class ErpSummary {
     final rare = <Float64List>[];
     var artifacts = 0;
     for (final e in epochs) {
-      final trace = _average(e, channels);
+      final trace = _derive(e, channels, minus);
       if (rejectAbove != null && _peakToPeak(trace) > rejectAbove) {
         artifacts++;
         continue;
@@ -431,6 +405,13 @@ class ErpSummary {
 
   /// Mean of [trace] over [window], in µV.
   static double windowMean(Float64List trace, (double, double) window) => _windowMean(trace, window);
+
+  static Float64List _derive(ErpEpoch e, List<int> channels, List<int> minus) {
+    final plus = _average(e, channels);
+    if (minus.isEmpty) return plus;
+    final less = _average(e, minus);
+    return Float64List.fromList([for (var i = 0; i < plus.length; i++) plus[i] - less[i]]);
+  }
 
   static Float64List _average(ErpEpoch e, List<int> channels) {
     if (channels.length == 1) return e.channels[channels.first];

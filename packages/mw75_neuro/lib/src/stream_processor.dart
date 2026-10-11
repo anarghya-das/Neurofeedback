@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:math' as math;
 
+import 'eeg_filters.dart';
 import 'protocol.dart';
 
 /// Values of the `sampleStatus` channel (the last one in the stream).
@@ -25,9 +26,15 @@ abstract final class SampleStatus {
 /// Research Kit uses for a CSV-recording counter (always 0 outside its own CSV
 /// recording) and this driver uses for [SampleStatus].
 class Mw75Sample {
-  const Mw75Sample(this.values, this.time, {required this.status});
+  const Mw75Sample(this.values, this.time, {required this.status, List<double>? raw}) : raw = raw ?? values;
 
+  /// As published: EEG, Ref and DRL after the stream's filters.
   final List<double> values;
+
+  /// Ch1–Ch12, Ref and DRL before any filtering (the same list as [values]
+  /// when the stream is unfiltered). Analyses that need exact timing or
+  /// their own filtering use these.
+  final List<double> raw;
 
   /// LSL clock seconds.
   final double time;
@@ -41,16 +48,34 @@ class Mw75Sample {
 /// Turns decoded packets into evenly timestamped samples.
 ///
 /// Mirrors Research Kit: lost packets (counter gaps) are filled by linear
-/// interpolation, the cumulative counter advances by the gap, and an optional
-/// 0.5 Hz high-pass removes DC offset. Unlike Research Kit, every sample says
+/// interpolation, the cumulative counter advances by the gap, and [filters]
+/// (Research Kit's 0.5 Hz high-pass plus a mains notch and band-pass) are
+/// applied, keeping the unfiltered values too. Unlike Research Kit, every sample says
 /// whether it was measured or filled in (see [SampleStatus]), and timestamps
 /// follow the headset's measured rate anchored to the earliest arrivals rather
 /// than the moment of pushing, so Bluetooth burst jitter does not leak into them.
 class Mw75StreamProcessor {
-  Mw75StreamProcessor({this.interpolate = true, this.removeDcOffset = false});
+  Mw75StreamProcessor({this.interpolate = true, EegFilterSettings filters = EegFilterSettings.off})
+    : _filters = filters;
 
   bool interpolate;
-  bool removeDcOffset;
+
+  /// Takes effect from the next sample; each filter starts from that sample.
+  EegFilterSettings get filters => _filters;
+  EegFilterSettings _filters;
+  set filters(EegFilterSettings value) {
+    if (value == _filters) return;
+    if (value.notch != _filters.notch || value.mainsHz != _filters.mainsHz) _mains = null;
+    _filters = value;
+    _bank = null;
+  }
+
+  /// Where the notch found mains interference, in Hz on this stream's clock,
+  /// or null until it has (or with the notch off).
+  double? get mainsHz {
+    final nu = _mains?.cyclesPerSample;
+    return nu == null ? null : nu * (_clock.effectiveRate ?? Mw75Protocol.samplingRate);
+  }
 
   static const channelCount = Mw75Protocol.eegChannelCount + 4;
 
@@ -61,7 +86,8 @@ class Mw75StreamProcessor {
   Mw75Packet? _previous;
   int _cumulative = 0;
   final _clock = _SampleClock(Mw75Protocol.samplingRate);
-  final _dcFilters = List.generate(Mw75Protocol.eegChannelCount + 2, (_) => _HighPass());
+  EegFilterBank? _bank;
+  MainsTracker? _mains;
 
   int received = 0;
   int lost = 0;
@@ -111,9 +137,8 @@ class Mw75StreamProcessor {
     _previous = null;
     _cumulative = 0;
     _clock.reset();
-    for (final f in _dcFilters) {
-      f.reset();
-    }
+    _bank = null;
+    _mains = null;
     received = 0;
     lost = 0;
     duplicates = 0;
@@ -133,19 +158,38 @@ class Mw75StreamProcessor {
   ];
 
   Mw75Sample _emit(List<double> values, int index, double arrival, int status) {
-    if (removeDcOffset) {
-      for (var i = 0; i < values.length; i++) {
-        values[i] = _dcFilters[i].apply(values[i]);
-      }
-    }
     // Research Kit writes 0 for non-finite values.
     for (var i = 0; i < values.length; i++) {
       if (!values[i].isFinite) values[i] = 0;
     }
+    final time = _clock.timeFor(index, arrival);
+    if (!_filters.any) {
+      values
+        ..add(index.toDouble())
+        ..add(status.toDouble());
+      return Mw75Sample(values, time, status: status);
+    }
+    final rate = _clock.effectiveRate ?? Mw75Protocol.samplingRate;
+    final bank = _bank ??= EegFilterBank(
+      _filters,
+      rate: rate,
+      eegChannels: Mw75Protocol.eegChannelCount,
+      extraChannels: 2,
+    );
+    bank.updateRate(rate);
+    if (_filters.notch) {
+      final mains = _mains ??= MainsTracker(channels: Mw75Protocol.eegChannelCount);
+      if (mains.add(values, expected: _filters.mainsHz / rate) || bank.notchCenter == null) {
+        final found = mains.cyclesPerSample;
+        if (found != null && found != bank.notchCenter) bank.setNotchCenter(found);
+      }
+    }
+    final raw = List<double>.of(values, growable: false);
+    bank.filter(values);
     values
       ..add(index.toDouble())
       ..add(status.toDouble());
-    return Mw75Sample(values, _clock.timeFor(index, arrival), status: status);
+    return Mw75Sample(values, time, status: status, raw: raw);
   }
 }
 
@@ -336,25 +380,5 @@ class _SampleClock {
     _lastArrival = null;
     _lastOutput = null;
     _lastIndex = 0;
-  }
-}
-
-/// First-order 0.5 Hz high-pass at 500 Hz, Research Kit's "DC offset" option.
-class _HighPass {
-  static const _alpha = 0.9937560466090253;
-  double? _xPrev;
-  double _yPrev = 0;
-
-  double apply(double x) {
-    final xPrev = _xPrev;
-    final y = xPrev == null ? 0.0 : _alpha * (_yPrev + x - xPrev);
-    _xPrev = x;
-    _yPrev = y;
-    return y;
-  }
-
-  void reset() {
-    _xPrev = null;
-    _yPrev = 0;
   }
 }

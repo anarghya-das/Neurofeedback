@@ -43,7 +43,10 @@ class _SyntheticEeg {
       }
       final values = [
         for (var c = 0; c < 12; c++) 20000 + 300 * c + 40 * math.sin(0.3 * t + c) + noise * _gauss() + evoked,
-        0.0, 0.0, _index.toDouble(), 0.0,
+        0.0,
+        0.0,
+        _index.toDouble(),
+        0.0,
       ];
       final status = loseEvery > 0 && _index % loseEvery == 0 ? SampleStatus.interpolated : SampleStatus.measured;
       out.add(Mw75Sample(values, t, status: status));
@@ -105,13 +108,40 @@ void main() {
       }
       expect(epochs, hasLength(60));
       final summary = ErpSummary.compute(epochs, [0]);
-      final peak = List.generate(ErpEpoch.length, (i) => i).reduce((a, b) => summary.rareMean[a] > summary.rareMean[b] ? a : b);
+      final peak = List.generate(
+        ErpEpoch.length,
+        (i) => i,
+      ).reduce((a, b) => summary.rareMean[a] > summary.rareMean[b] ? a : b);
       expect(ErpEpoch.timeAt(peak), closeTo(0.3, 0.012));
       expect(summary.rareMean[peak], closeTo(8, 2.5));
       // Baseline-corrected: flat before onset despite the 20 mV offsets.
       for (var i = 0; i < ErpEpoch.baselineLength; i++) {
         expect(summary.rareMean[i].abs(), lessThan(2));
       }
+    });
+
+    test('a 1 Hz high-pass removes more slow drift than 0.5 Hz', () {
+      double drift(double highPass) {
+        final eeg = _SyntheticEeg();
+        final extractor = EpochExtractor(highPass: highPass);
+        final epochs = <ErpEpoch>[];
+        var onset = eeg.t0 + 2;
+        for (var i = 0; i < 30; i++) {
+          // A slow 0.7 Hz swing locked to each tone, as a drift artifact.
+          eeg.tone(onset, (dt) => 20 * math.sin(2 * math.pi * 0.7 * dt));
+          extractor.addEvent(StimulusEvent(onset: onset, rare: false));
+          onset += 1.1;
+        }
+        for (var i = 0; i < 40; i++) {
+          for (final o in extractor.addSamples(eeg.next(1))) {
+            if (o.epoch != null) epochs.add(o.epoch!);
+          }
+        }
+        final s = ErpSummary.compute(epochs, [0], tests: false);
+        return s.standardMean.reduce(math.max) - s.standardMean.reduce(math.min);
+      }
+
+      expect(drift(1), lessThan(drift(0.5) * 0.8));
     });
 
     test('waits for the padding after a tone before cutting its epoch', () {
@@ -153,7 +183,10 @@ void main() {
       final sequence = oddballSequence(trials: 150, rareProbability: 0.2, random: math.Random(seed));
       var onset = eeg.t0 + 2;
       for (final rare in sequence) {
-        eeg.tone(onset, (dt) => _gaussianBump(dt, 0.11, 0.025, allN1) + (rare ? _gaussianBump(dt, 0.35, 0.08, rareP3) : 0));
+        eeg.tone(
+          onset,
+          (dt) => _gaussianBump(dt, 0.11, 0.025, allN1) + (rare ? _gaussianBump(dt, 0.35, 0.08, rareP3) : 0),
+        );
         extractor.addEvent(StimulusEvent(onset: onset, rare: rare));
         onset += 1.15;
       }
@@ -184,6 +217,21 @@ void main() {
       }
       // 20 tests at α = 0.05: one or two by chance, rarely more.
       expect(falsePositives, lessThanOrEqualTo(4));
+    });
+
+    test('derives top minus bottom', () {
+      final top = Float64List(ErpEpoch.length)..[100] = 5;
+      final bottom = Float64List(ErpEpoch.length)..[100] = -3;
+      final channels = List.generate(12, (c) => c == 1 ? top : (c == 4 ? bottom : Float64List(ErpEpoch.length)));
+      final epoch = ErpEpoch(const StimulusEvent(onset: 0, rare: true), channels, lostFraction: 0);
+      final s = ErpSummary.compute([epoch], [Mw75Montage.leftTop], minus: [Mw75Montage.leftBottom], tests: false);
+      expect(s.rareMean[100], 8);
+      expect(ErpSummary.compute([epoch], [1, 4], tests: false).rareMean[100], 1);
+    });
+
+    test('the P300 window reaches the later around-the-ear peak', () {
+      expect(ErpSummary.oddballWindow.$1, 0.3);
+      expect(ErpSummary.oddballWindow.$2, 0.6);
     });
 
     test('leaves out epochs over the amplitude threshold', () {
