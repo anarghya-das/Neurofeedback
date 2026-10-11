@@ -5,7 +5,9 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = mw75_neuro_example
+// The bundled liblsl (lsl_bindings) is built for macOS 14+, hence the
+// deployment target of 14.0 in the Xcode project and Podfile.
+PRODUCT_NAME = MW75 Bench
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = edu.buffalo.neurofeedback.mw75NeuroExample
