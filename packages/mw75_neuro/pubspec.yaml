@@ -1,6 +1,6 @@
 name: mw75_neuro
 description: "Neurable MW75 Neuro driver for macOS: RFCOMM transport, start/stop, signal quality and an LSL outlet compatible with Neurable Research Kit."
-version: 0.1.0
+version: 0.2.0
 publish_to: 'none'
 
 environment:
