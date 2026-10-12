@@ -45,6 +45,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   final metrics = Mw75MetricSession();
   late final oddball = OddballSession(headset: headset, store: _store);
   late final alpha = AlphaSession(headset: headset, store: _store);
+  late final focus = FocusSession(headset: headset, store: _store);
 
   /// Finished test runs: one folder each, with results and the raw EEG.
   static final _store = TestRunStore(Directory('${Platform.environment['HOME']}/Documents/MW75 Tests'));
@@ -80,6 +81,12 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   _ChannelSet _erpSource = const _ChannelSet.bipolar();
   _ChannelSet _alphaSource = const _ChannelSet.all();
   _View _view = _View.live;
+
+  /// The side panel (headset, Neurable Focus, filters, stream); hidden, the
+  /// views get the whole window.
+  bool _panelOpen = true;
+  FocusVisual _focusVisual = FocusVisual.flame;
+  static const _panelWidth = 360.0;
   Timer? _bandTimer;
   HeadsetState? _lastState;
 
@@ -110,6 +117,13 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
           'epochs std=${s.standardCount} rare=${s.rareCount} artifacts=${s.artifactCount} '
           'unusable=${oddball.rejections.map((k, v) => MapEntry(k.name, v))} '
           'N1 ${p(s.response)} P300 ${p(s.oddball)} latency=${oddball.outputInfo?.latency.toStringAsFixed(3)}',
+        );
+      }
+      if (focus.model != null && headset.state == HeadsetState.streaming) {
+        debugPrint(
+          '[bench] focus ${focus.state.name} score=${focus.score?.toStringAsFixed(1)} noisy=${focus.noisy} '
+          'block=${focus.blockNumber}/${focus.blockCount} auc=${focus.model?.cvAuc.toStringAsFixed(2)}'
+          '${focus.noisyReason == null ? '' : ' why=${focus.noisyReason}'}',
         );
       }
       if (alpha.busy) {
@@ -144,6 +158,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
     await oddball.refreshOutputs();
     await oddball.loadSaved();
     await alpha.loadSaved();
+    await focus.loadSaved();
     if (!_autostart) return;
     debugPrint('[bench] devices: ${headset.devices}');
     await headset.start();
@@ -199,6 +214,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
     _consoleStatus?.cancel();
     oddball.dispose();
     alpha.dispose();
+    focus.dispose();
     headset.dispose();
     metrics.dispose();
     _streamName.dispose();
@@ -213,79 +229,117 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              width: 360,
-              child: ListView(
-                children: [
-                  // Tested on the lab headset: while raw EEG is on, it holds a Focus
-                  // start request and only starts Focus once raw mode is switched
-                  // off. So the two run one at a time, as in Research Kit.
-                  ListenableBuilder(
-                    listenable: Listenable.merge([headset, metrics]),
-                    builder: (context, _) {
-                      final rawActive =
-                          headset.state == HeadsetState.starting || headset.state == HeadsetState.streaming;
-                      final focusActive =
-                          metrics.state == MetricState.connecting || metrics.state == MetricState.running;
-                      return Column(
+            // Slides shut by shrinking to zero width; the panel keeps its size
+            // inside, clipped, so nothing reflows and its state is kept.
+            AnimatedContainer(
+              duration: MediaQuery.of(context).disableAnimations ? Duration.zero : const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              width: _panelOpen ? _panelWidth + 18 : 0,
+              child: ClipRect(
+                child: OverflowBox(
+                  alignment: Alignment.centerRight,
+                  minWidth: _panelWidth + 18,
+                  maxWidth: _panelWidth + 18,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 18),
+                    child: ExcludeFocus(
+                      excluding: !_panelOpen,
+                      child: ListView(
                         children: [
-                          _Card(
-                            title: 'Headset',
-                            trailing: HeadsetStatusBadge(headset: headset),
-                            child: HeadsetPanel(
-                              headset: headset,
-                              startBlockedReason: focusActive
-                                  ? 'Stop Focus first: the headset runs Focus and raw EEG one at a time.'
-                                  : null,
-                            ),
+                          // Tested on the lab headset: while raw EEG is on, it holds a Focus
+                          // start request and only starts Focus once raw mode is switched
+                          // off. So the two run one at a time, as in Research Kit.
+                          ListenableBuilder(
+                            listenable: Listenable.merge([headset, metrics]),
+                            builder: (context, _) {
+                              final rawActive =
+                                  headset.state == HeadsetState.starting || headset.state == HeadsetState.streaming;
+                              final focusActive =
+                                  metrics.state == MetricState.connecting || metrics.state == MetricState.running;
+                              return Column(
+                                children: [
+                                  _Card(
+                                    title: 'Headset',
+                                    trailing: HeadsetStatusBadge(headset: headset),
+                                    child: HeadsetPanel(
+                                      headset: headset,
+                                      startBlockedReason: focusActive
+                                          ? 'Stop Focus first: the headset runs Focus and raw EEG one at a time.'
+                                          : null,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 14),
+                                  _Card(
+                                    title: 'Neurable Focus',
+                                    child: FocusPanel(
+                                      session: metrics,
+                                      startBlockedReason: rawActive
+                                          ? 'Stop raw EEG first: the headset only starts Focus once raw mode is off.'
+                                          : null,
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                           const SizedBox(height: 14),
                           _Card(
-                            title: 'Focus',
-                            child: FocusPanel(
-                              session: metrics,
-                              startBlockedReason: rawActive
-                                  ? 'Stop raw EEG first: the headset only starts Focus once raw mode is off.'
-                                  : null,
-                            ),
+                            title: 'Filters',
+                            child: FilterSettingsPanel(headset: headset),
+                          ),
+                          const SizedBox(height: 14),
+                          _Card(
+                            title: 'Stream',
+                            child: _StreamSettings(headset: headset, name: _streamName),
                           ),
                         ],
-                      );
-                    },
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 14),
-                  _Card(
-                    title: 'Filters',
-                    child: FilterSettingsPanel(headset: headset),
-                  ),
-                  const SizedBox(height: 14),
-                  _Card(
-                    title: 'Stream',
-                    child: _StreamSettings(headset: headset, name: _streamName),
-                  ),
-                ],
+                ),
               ),
             ),
-            const SizedBox(width: 18),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SegmentedButton<_View>(
-                    showSelectedIcon: false,
-                    style: SegmentedButton.styleFrom(
-                      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                      visualDensity: VisualDensity.compact,
-                      backgroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                    segments: const [
-                      ButtonSegment(value: _View.live, label: Text('Live signals')),
-                      ButtonSegment(value: _View.oddball, label: Text('Auditory oddball')),
-                      ButtonSegment(value: _View.alpha, label: Text('Eyes-closed alpha')),
+                  Row(
+                    children: [
+                      Tooltip(
+                        message: _panelOpen ? 'Hide the side panel' : 'Show the side panel',
+                        child: IconButton.outlined(
+                          onPressed: () => setState(() => _panelOpen = !_panelOpen),
+                          icon: Icon(_panelOpen ? Icons.chevron_left_rounded : Icons.view_sidebar_outlined, size: 18),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            minimumSize: const Size(36, 36),
+                            side: const BorderSide(color: _line),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      SegmentedButton<_View>(
+                        showSelectedIcon: false,
+                        style: SegmentedButton.styleFrom(
+                          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                          visualDensity: VisualDensity.compact,
+                          backgroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        segments: const [
+                          ButtonSegment(value: _View.live, label: Text('Live signals')),
+                          ButtonSegment(value: _View.oddball, label: Text('Auditory oddball')),
+                          ButtonSegment(value: _View.alpha, label: Text('Eyes-closed alpha')),
+                          ButtonSegment(value: _View.focus, label: Text('Your focus')),
+                        ],
+                        selected: {_view},
+                        onSelectionChanged: (v) => setState(() => _view = v.first),
+                      ),
+                      const Spacer(),
+                      // With the panel hidden, still show whether EEG is streaming.
+                      if (!_panelOpen) HeadsetStatusBadge(headset: headset),
                     ],
-                    selected: {_view},
-                    onSelectionChanged: (v) => setState(() => _view = v.first),
                   ),
                   const SizedBox(height: 14),
                   Expanded(
@@ -293,6 +347,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                       _View.live => _liveView(),
                       _View.oddball => _oddballView(),
                       _View.alpha => _alphaView(),
+                      _View.focus => _focusView(),
                     },
                   ),
                 ],
@@ -450,14 +505,10 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
             _Card(
               title: 'Auditory oddball',
               child: ListenableBuilder(
-                listenable: Listenable.merge([headset, alpha]),
+                listenable: Listenable.merge([headset, alpha, focus]),
                 builder: (context, _) => OddballControls(
                   session: oddball,
-                  startBlockedReason: headset.state != HeadsetState.streaming
-                      ? 'Start raw EEG in the Headset card first.'
-                      : alpha.busy
-                      ? 'Wait for the alpha test to finish.'
-                      : null,
+                  startBlockedReason: _testBlockedReason(except: oddball),
                 ),
               ),
             ),
@@ -513,14 +564,10 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
             _Card(
               title: 'Eyes-closed alpha',
               child: ListenableBuilder(
-                listenable: Listenable.merge([headset, oddball]),
+                listenable: Listenable.merge([headset, oddball, focus]),
                 builder: (context, _) => AlphaControls(
                   session: alpha,
-                  startBlockedReason: headset.state != HeadsetState.streaming
-                      ? 'Start raw EEG in the Headset card first.'
-                      : oddball.busy
-                      ? 'Wait for the oddball test to finish.'
-                      : null,
+                  startBlockedReason: _testBlockedReason(except: alpha),
                 ),
               ),
             ),
@@ -572,9 +619,76 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
       ),
     ],
   );
+
+  /// Why a guided test cannot start now: no EEG, or another test running.
+  String? _testBlockedReason({required Object except}) {
+    if (headset.state != HeadsetState.streaming) return 'Start raw EEG in the Headset card first.';
+    if (!identical(except, oddball) && oddball.busy) return 'Wait for the oddball test to finish.';
+    if (!identical(except, alpha) && alpha.busy) return 'Wait for the alpha test to finish.';
+    if (!identical(except, focus) && focus.calibrating) return 'Wait for the focus calibration to finish.';
+    return null;
+  }
+
+  Widget _focusView() => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      SizedBox(
+        width: 340,
+        child: ListView(
+          children: [
+            _Card(
+              title: 'Your focus',
+              child: ListenableBuilder(
+                listenable: Listenable.merge([headset, oddball, alpha]),
+                builder: (context, _) => FocusControls(
+                  session: focus,
+                  startBlockedReason: _testBlockedReason(except: focus),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(width: 14),
+      Expanded(
+        child: Column(
+          children: [
+            Expanded(
+              flex: 3,
+              child: _Card(
+                title: 'Focus now',
+                trailing: _Picker<FocusVisual>(
+                  value: _focusVisual,
+                  options: FocusVisual.values,
+                  label: (v) => v.label,
+                  tooltip: 'How the score is pictured',
+                  onChanged: (v) => setState(() => _focusVisual = v),
+                ),
+                child: Expanded(
+                  child: FocusScoreView(session: focus, visual: _focusVisual),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Expanded(
+              flex: 2,
+              child: _Card(
+                title: 'Over the last 5 minutes',
+                trailing: const Text(
+                  'Dashed: target · shaded: too noisy to score',
+                  style: TextStyle(fontSize: 11, color: _muted),
+                ),
+                child: Expanded(child: FocusTimeline(session: focus)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
-enum _View { live, oddball, alpha }
+enum _View { live, oddball, alpha, focus }
 
 enum _BandView {
   bars('Band power'),
