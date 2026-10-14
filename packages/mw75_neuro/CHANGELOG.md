@@ -3,11 +3,11 @@
 Versions of the MW75 Bench app (`example/`) and, in brackets, of the
 `mw75_neuro` package it ships with. Releases are tagged `mw75-bench-v<version>`.
 
-## Unreleased
+## MW75 Bench 1.2.1 (mw75_neuro 0.3.1)
 
-- The **Trials used** table shows its Standard and Rare row labels again when the
-  window is narrow (for example 1280 points wide with the side panel open): it moves
-  under the two test tiles instead of squeezing the labels out.
+- The **Trials used** table shows its Standard and Rare row labels when the window is
+  narrow (for example 1280 points wide with the side panel open): it moves under the
+  two test tiles instead of squeezing the labels out.
 
 ## MW75 Bench 1.2.0 (mw75_neuro 0.3.0)
 
