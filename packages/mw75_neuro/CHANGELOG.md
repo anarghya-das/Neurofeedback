@@ -3,6 +3,12 @@
 Versions of the MW75 Bench app (`example/`) and, in brackets, of the
 `mw75_neuro` package it ships with. Releases are tagged `mw75-bench-v<version>`.
 
+## Unreleased
+
+- The **Trials used** table shows its Standard and Rare row labels again when the
+  window is narrow (for example 1280 points wide with the side panel open): it moves
+  under the two test tiles instead of squeezing the labels out.
+
 ## MW75 Bench 1.2.0 (mw75_neuro 0.3.0)
 
 - **Sound level**: the oddball tones' level can be set. A step-by-step calibration with a

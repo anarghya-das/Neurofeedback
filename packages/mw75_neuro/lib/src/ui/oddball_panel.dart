@@ -567,10 +567,9 @@ class ErpPanel extends StatelessWidget {
               child: ErpPlot(summary: summary, onBaselineChanged: (window) => session.baseline = window),
             ),
             const SizedBox(height: 12),
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final tests = [
                   Expanded(
                     child: _TestTile(
                       title: 'Response to every tone',
@@ -590,10 +589,29 @@ class ErpPanel extends StatelessWidget {
                       finished: !session.busy,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(child: _TrialsTile(session: session, summary: summary)),
-                ],
-              ),
+                ];
+                final trials = _TrialsTile(session: session, summary: summary);
+                // The trials table needs about 210 points; narrower, its row
+                // labels would get no width, so it goes under the tests.
+                if (constraints.maxWidth >= _TrialsTile.minRowWidth) {
+                  return IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [...tests, const SizedBox(width: 12), Expanded(child: trials)],
+                    ),
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    IntrinsicHeight(
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: tests),
+                    ),
+                    const SizedBox(height: 12),
+                    trials,
+                  ],
+                );
+              },
             ),
           ],
         );
@@ -1096,6 +1114,9 @@ class _BaselinePicker extends StatelessWidget {
 /// Tones played, used in the average and left out, for standard and rare.
 class _TrialsTile extends StatelessWidget {
   const _TrialsTile({required this.session, required this.summary});
+
+  /// Narrowest row that fits the two test tiles and this one side by side.
+  static const minRowWidth = 660.0;
 
   final OddballSession session;
   final ErpSummary summary;

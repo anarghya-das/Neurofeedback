@@ -275,4 +275,32 @@ void main() {
       File(renderPath.replaceFirst('.png', '_baseline.png')).writeAsBytesSync(png!.buffer.asUint8List());
     });
   });
+
+  testWidgets('the trials table keeps its row labels when the panel is narrow', (tester) async {
+    final loader = FontLoader('Roboto');
+    for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
+      final bytes = File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync();
+      loader.addFont(Future.value(ByteData.sublistView(bytes)));
+    }
+    await loader.load();
+    final session = OddballSession(headset: Mw75Headset(), tones: _SilentTones(), publishMarkers: false);
+    addTearDown(session.dispose);
+
+    // The panel's width beside the side panel in a 1280-point window.
+    await tester.binding.setSurfaceSize(const Size(468, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: ErpPanel(session: session, channels: List.generate(12, (i) => i))),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    // A label squeezed to no width is laid out but not painted, and reports no
+    // overflow; it then sits under the first column of numbers.
+    final used = tester.getRect(find.text('Used'));
+    for (final label in ['Standard', 'Rare']) {
+      expect(tester.getRect(find.text(label)).right, lessThanOrEqualTo(used.left), reason: label);
+    }
+  });
 }
