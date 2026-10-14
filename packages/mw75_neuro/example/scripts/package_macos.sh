@@ -54,6 +54,9 @@ Using it
 - EEG is published to Lab Streaming Layer as "MW75 Neuro Neurable Stream"; oddball tones as "MW75 Oddball Markers".
 - Test runs (auditory oddball, eyes-closed alpha) are saved to Documents/MW75 Tests: run.json with the settings
   and results, and eeg.csv with the raw EEG.
+- Auditory oddball sound level: with a sound level meter, calibrate each output once (Calibrate... beside Sound
+  level) to set levels in dB SPL. Keep the Mac volume where it was calibrated; the app warns if it moves.
+  Calibrations are saved to Documents/MW75 Tests/sound calibration.json.
 - Your focus: calibrate once (about 4-6 minutes of alternating rest and silent counting), then the score is shown
   as a number, a bar and a flame or rocket, and published to LSL as "MW75 Focus". The calibration is saved to
   Documents/MW75 Tests/focus model.json. Calibrations from version 1.0 cannot be read: calibrate again.

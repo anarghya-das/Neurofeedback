@@ -3,7 +3,7 @@
 Versions of the MW75 Bench app (`example/`) and, in brackets, of the
 `mw75_neuro` package it ships with. Releases are tagged `mw75-bench-v<version>`.
 
-## Unreleased
+## MW75 Bench 1.2.0 (mw75_neuro 0.3.0)
 
 - **Sound level**: the oddball tones' level can be set. A step-by-step calibration with a
   sound level meter (per output, at a fixed Mac volume) lets it be set in dB SPL, with
