@@ -119,6 +119,28 @@ public class Mw75NeuroPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       } catch {
         result(FlutterError(code: "audio_failed", message: error.localizedDescription, details: nil))
       }
+    case "audioHold":
+      guard let frequency = args["frequency"] as? Double, let amplitude = args["amplitude"] as? Double else {
+        result(FlutterError(code: "bad_args", message: "audioHold needs frequency, amplitude", details: nil))
+        return
+      }
+      do {
+        try tones.hold(frequency: frequency, amplitude: amplitude)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "audio_failed", message: error.localizedDescription, details: nil))
+      }
+    case "audioRelease":
+      tones.release()
+      result(nil)
+    case "audioVolume":
+      result(ToneStimulator.volume(deviceId: args["deviceId"] as? Int))
+    case "audioSetVolume":
+      guard let volume = args["volume"] as? Double else {
+        result(FlutterError(code: "bad_args", message: "audioSetVolume needs volume", details: nil))
+        return
+      }
+      result(ToneStimulator.setVolume(deviceId: args["deviceId"] as? Int, volume: volume))
     case "audioStop":
       tones.stop()
       result(nil)

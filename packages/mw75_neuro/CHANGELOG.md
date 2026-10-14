@@ -3,6 +3,22 @@
 Versions of the MW75 Bench app (`example/`) and, in brackets, of the
 `mw75_neuro` package it ships with. Releases are tagged `mw75-bench-v<version>`.
 
+## Unreleased
+
+- **Sound level**: the oddball tones' level can be set. A step-by-step calibration with a
+  sound level meter (per output, at a fixed Mac volume) lets it be set in dB SPL, with
+  each tone frequency measured separately and checked levels kept as quick picks.
+  Uncalibrated outputs use a level relative to the loudest the app plays. The app
+  notices when the Mac volume moves from the calibrated one and can set it back.
+- **Oddball settings**: rare (deviant) share from 10% to 30%, tone length from 50 to
+  200 ms, and the time between tones (ISI, shortest and longest).
+- **Average response**: a table of trials used and rejected for standard and rare
+  tones, with the reasons; a baseline window that can be switched or dragged out on
+  the plot (the averages, channel plots and tests follow); and a readout of each trace
+  under the pointer.
+- Runs record the level, ISI, tone length and rare share they used; runs saved by
+  1.1.0 still load.
+
 ## MW75 Bench 1.1.0 (mw75_neuro 0.2.0)
 
 - **Your focus**: a personal focus score from the raw EEG. A calibration alternates

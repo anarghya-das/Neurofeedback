@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'erp.dart';
 import 'headset.dart';
 import 'lsl_eeg_outlet.dart';
+import 'sound_calibration.dart';
 import 'stream_processor.dart';
 import 'test_runs.dart';
 import 'tone_output.dart';
@@ -23,30 +25,51 @@ class OddballSettings {
     this.lowHz = 1000,
     this.highHz = 2000,
     this.toneSeconds = 0.1,
-    this.amplitude = 0.3,
+    this.levelSpl = 70,
+    this.levelDbfs = -10,
     this.minInterval = 1.0,
     this.maxInterval = 1.3,
     this.highPassHz = 0.5,
   });
 
   final int trials;
+
+  /// Share of the tones that are rare (deviant). Every rare tone follows at
+  /// least two standards (see [oddballSequence]), which caps it at one in three.
   final double rareProbability;
+  static const rareOptions = [0.1, 0.15, 0.2, 0.25, 0.3];
 
   /// Which tone is rare. Running once each way and pooling the results means
   /// a rare-vs-standard difference cannot come from the pitch itself.
   final bool rareIsHigh;
   final double lowHz;
   final double highHz;
+
+  /// Tone length, including 10 ms rise and fall.
   final double toneSeconds;
+  static const toneOptions = [0.05, 0.075, 0.1, 0.15, 0.2];
 
-  /// Peak level, 0–1 of full scale; the system volume applies on top.
-  final double amplitude;
+  /// Level of both tones in dB SPL, used when the output has a
+  /// [SoundCalibration] for both.
+  final double levelSpl;
+  static const minSpl = 20.0;
+  static const maxSpl = 100.0;
 
-  /// Onset-to-onset interval in seconds, drawn uniformly from this range so
-  /// tones cannot be anticipated. At least the epoch length (0.8 s after onset)
-  /// keeps the next tone's response out of the epoch.
+  /// Above this, long sessions risk hearing damage.
+  static const loudSpl = 85.0;
+
+  /// Level in dB relative to the loudest the app plays (0 dB FS), used when
+  /// the output is not calibrated. The Mac's volume applies on top.
+  final double levelDbfs;
+  static const minDbfs = -60.0;
+
+  /// Onset-to-onset interval (ISI) in seconds, drawn uniformly from this
+  /// range so tones cannot be anticipated. At least the epoch length (0.8 s
+  /// after onset) keeps the next tone's response out of the epoch.
   final double minInterval;
   final double maxInterval;
+  static const shortestInterval = 0.3;
+  static const longestInterval = 5.0;
 
   /// High-pass of the epoch filter: 0.5 Hz (wet-electrode studies go as low
   /// as 0.1) or 1 Hz (the usual choice for dry electrodes, which drift more).
@@ -66,7 +89,8 @@ class OddballSettings {
     'lowHz': lowHz,
     'highHz': highHz,
     'toneSeconds': toneSeconds,
-    'amplitude': amplitude,
+    'levelSpl': levelSpl,
+    'levelDbfs': levelDbfs,
     'minInterval': minInterval,
     'maxInterval': maxInterval,
     'highPassHz': highPassHz,
@@ -75,6 +99,9 @@ class OddballSettings {
   factory OddballSettings.fromJson(Map<String, Object?> j) {
     double d(String key, double fallback) => (j[key] as num?)?.toDouble() ?? fallback;
     const defaults = OddballSettings();
+    // Runs saved by MW75 Bench 1.1.0 and earlier have a fixed amplitude
+    // rather than a level.
+    final amplitude = (j['amplitude'] as num?)?.toDouble();
     return OddballSettings(
       trials: (j['trials'] as num?)?.toInt() ?? defaults.trials,
       rareProbability: d('rareProbability', defaults.rareProbability),
@@ -82,25 +109,55 @@ class OddballSettings {
       lowHz: d('lowHz', defaults.lowHz),
       highHz: d('highHz', defaults.highHz),
       toneSeconds: d('toneSeconds', defaults.toneSeconds),
-      amplitude: d('amplitude', defaults.amplitude),
+      levelSpl: d('levelSpl', defaults.levelSpl),
+      levelDbfs: d('levelDbfs', amplitude != null && amplitude > 0 ? dbfsForAmplitude(amplitude) : defaults.levelDbfs),
       minInterval: d('minInterval', defaults.minInterval),
       maxInterval: d('maxInterval', defaults.maxInterval),
       highPassHz: d('highPassHz', defaults.highPassHz),
     );
   }
 
-  OddballSettings copyWith({int? trials, bool? rareIsHigh, double? highPassHz}) => OddballSettings(
+  OddballSettings copyWith({
+    int? trials,
+    double? rareProbability,
+    bool? rareIsHigh,
+    double? toneSeconds,
+    double? levelSpl,
+    double? levelDbfs,
+    double? minInterval,
+    double? maxInterval,
+    double? highPassHz,
+  }) => OddballSettings(
     trials: trials ?? this.trials,
-    rareProbability: rareProbability,
+    rareProbability: rareProbability ?? this.rareProbability,
     rareIsHigh: rareIsHigh ?? this.rareIsHigh,
     lowHz: lowHz,
     highHz: highHz,
-    toneSeconds: toneSeconds,
-    amplitude: amplitude,
-    minInterval: minInterval,
-    maxInterval: maxInterval,
+    toneSeconds: toneSeconds ?? this.toneSeconds,
+    levelSpl: levelSpl ?? this.levelSpl,
+    levelDbfs: levelDbfs ?? this.levelDbfs,
+    minInterval: minInterval ?? this.minInterval,
+    maxInterval: maxInterval ?? this.maxInterval,
     highPassHz: highPassHz ?? this.highPassHz,
   );
+}
+
+/// Tones of one kind (standard or rare) in the results.
+@immutable
+class TrialCounts {
+  const TrialCounts({required this.played, required this.used, this.waiting = 0});
+
+  final int played;
+
+  /// In the average.
+  final int used;
+
+  /// Played in the run going on, with their EEG still to come.
+  final int waiting;
+
+  /// Left out of the average: EEG lost or unusable, over the amplitude
+  /// threshold, or cut off when a run was stopped.
+  int get rejected => math.max(0, played - used - waiting);
 }
 
 /// Standard (false) and rare (true) tones in random order. The run opens with
@@ -144,6 +201,24 @@ class OddballRun {
   final OddballSettings settings;
   String? output;
   double? latency;
+
+  /// Levels the standard and rare tones played at, dB FS.
+  double? standardDbfs;
+  double? rareDbfs;
+
+  /// When the output's calibration was made, if the level was set in dB SPL.
+  DateTime? calibrationDate;
+
+  /// The output's macOS volume (0–1) when the run started, if it could be read.
+  double? volume;
+
+  bool get calibrated => calibrationDate != null;
+
+  /// "70 dB SPL", or "−10 dB, uncalibrated".
+  String get levelLabel => calibrated
+      ? '${formatDb(settings.levelSpl)} dB SPL'
+      : '${formatDb(settings.levelDbfs)} dB, uncalibrated';
+
   int trialsPlayed = 0;
   int raresPlayed = 0;
   final epochs = <ErpEpoch>[];
@@ -157,11 +232,15 @@ class OddballRun {
 
   Map<String, Object?> toJson() => {
     'kind': kind,
-    'version': 1,
+    'version': 2,
     'started': started.toIso8601String(),
     'settings': settings.toJson(),
     'output': output,
     'latencySeconds': latency,
+    'standardDbfs': standardDbfs,
+    'rareDbfs': rareDbfs,
+    'calibrationDate': calibrationDate?.toIso8601String(),
+    'volume': volume,
     'trialsPlayed': trialsPlayed,
     'raresPlayed': raresPlayed,
     'rejections': {for (final e in rejections.entries) e.key.name: e.value},
@@ -189,6 +268,10 @@ class OddballRun {
       ..folder = folder
       ..output = j['output'] as String?
       ..latency = (j['latencySeconds'] as num?)?.toDouble()
+      ..standardDbfs = (j['standardDbfs'] as num?)?.toDouble()
+      ..rareDbfs = (j['rareDbfs'] as num?)?.toDouble()
+      ..calibrationDate = DateTime.tryParse(j['calibrationDate'] as String? ?? '')
+      ..volume = (j['volume'] as num?)?.toDouble()
       ..trialsPlayed = (j['trialsPlayed'] as num?)?.toInt() ?? 0
       ..raresPlayed = (j['raresPlayed'] as num?)?.toInt() ?? 0;
     for (final MapEntry(:key, :value) in (j['rejections'] as Map? ?? const {}).entries) {
@@ -222,10 +305,22 @@ class OddballRun {
 /// [progress] ticks once a second during a run, independent of tone timing;
 /// rebuild counters and plots from that.
 class OddballSession extends ChangeNotifier {
-  OddballSession({required this.headset, ToneOutput? tones, this.store, this.publishMarkers = true})
-    : _tones = tones ?? ToneOutput();
+  OddballSession({
+    required this.headset,
+    ToneOutput? tones,
+    this.store,
+    SoundCalibrations? calibrations,
+    this.publishMarkers = true,
+  }) : _tones = tones ?? ToneOutput(),
+       calibrations =
+           calibrations ?? SoundCalibrations(file: store == null ? null : File('${store.directory.path}/$calibrationFile')) {
+    this.calibrations.addListener(notifyListeners);
+  }
 
   static const markerStreamName = 'MW75 Oddball Markers';
+
+  /// Kept beside the saved runs.
+  static const calibrationFile = 'sound calibration.json';
 
   /// Below this recent packet loss the EEG link counts as settled.
   static const _maxLossToStart = 0.6;
@@ -238,6 +333,10 @@ class OddballSession extends ChangeNotifier {
 
   /// Where runs are saved; null keeps them in memory only.
   final TestRunStore? store;
+
+  /// Sound level meter readings for each output, which let the level be set
+  /// in dB SPL.
+  final SoundCalibrations calibrations;
   final bool publishMarkers;
 
   OddballState _state = OddballState.idle;
@@ -249,6 +348,16 @@ class OddballSession extends ChangeNotifier {
   OddballSettings get settings => _settings;
   set settings(OddballSettings value) {
     _settings = value;
+    notifyListeners();
+  }
+
+  /// The window averages are baseline-corrected to, in seconds after onset;
+  /// see [ErpSummary.compute].
+  (double, double) get baseline => _baseline;
+  (double, double) _baseline = ErpEpoch.baseline;
+  set baseline((double, double) value) {
+    if (value == _baseline) return;
+    _baseline = value;
     notifyListeners();
   }
 
@@ -269,6 +378,113 @@ class OddballSession extends ChangeNotifier {
   set output(AudioOutputDevice? value) {
     _output = value;
     notifyListeners();
+    unawaited(refreshVolume());
+  }
+
+  /// The chosen output's name, or the system output's.
+  String? get outputName => _output?.name ?? outputs.where((d) => d.isDefault).firstOrNull?.name;
+
+  /// The chosen output's calibration, if it has readings for both tones; the
+  /// level is then set in dB SPL.
+  SoundCalibration? get calibration {
+    final c = calibrations[outputName];
+    return c != null && c.covers(_settings.lowHz) && c.covers(_settings.highHz) ? c : null;
+  }
+
+  /// The chosen output's macOS volume, 0–1, as last read; null if it has none
+  /// the app can read.
+  double? get volume => _volume;
+  double? _volume;
+
+  /// The Mac volume is not what the calibration was made at, so the levels
+  /// would be off.
+  bool get volumeChanged {
+    final was = calibration?.volume, now = _volume;
+    return was != null && now != null && (now - was).abs() > 0.005;
+  }
+
+  /// Loudest both tones can play, dB SPL, when calibrated.
+  double? get loudestSpl {
+    final c = calibration;
+    if (c == null) return null;
+    return math.min(c.maxSpl(_settings.lowHz)!, c.maxSpl(_settings.highHz)!);
+  }
+
+  /// Why a run cannot play at the chosen level, or null.
+  String? get levelProblem {
+    final c = calibration;
+    if (c == null) return null;
+    if (volumeChanged) {
+      return 'The Mac volume for ${c.device} is ${percent(_volume!)} but was ${percent(c.volume!)} when it was '
+          'calibrated, so the level would be off. Set it back, or calibrate again.';
+    }
+    final loudest = loudestSpl!;
+    if (_settings.levelSpl > loudest + 0.05) {
+      return '${formatDb(_settings.levelSpl)} dB SPL is louder than ${c.device} plays at this volume '
+          '(up to ${loudest.floor()} dB SPL). Choose a lower level.';
+    }
+    return null;
+  }
+
+  /// Digital level for each tone, dB FS: from the calibration when there is
+  /// one, otherwise [OddballSettings.levelDbfs].
+  ({double standard, double rare}) levelsFor(OddballSettings s) {
+    final c = calibration;
+    double level(double hz) => math.min(0, c == null ? s.levelDbfs : c.dbfsFor(hz, s.levelSpl)!);
+    return (standard: level(s.standardHz), rare: level(s.rareHz));
+  }
+
+  Future<void> refreshVolume() async {
+    double? volume;
+    try {
+      volume = await _tones.volume(deviceId: _output?.id);
+    } catch (_) {}
+    if (volume == _volume) return;
+    _volume = volume;
+    notifyListeners();
+  }
+
+  /// Puts the Mac volume back to where the calibration was made.
+  Future<void> restoreVolume() async {
+    final was = calibration?.volume;
+    if (was != null) await setVolume(was);
+  }
+
+  /// Sets the chosen output's macOS volume, 0–1; false if macOS does not
+  /// allow it, with [statusText] saying so.
+  Future<bool> setVolume(double volume) async {
+    var done = false;
+    try {
+      done = await _tones.setVolume(volume, deviceId: _output?.id);
+      if (!done) statusText = 'macOS did not let the app change this output\'s volume: set it to ${percent(volume)} yourself.';
+    } catch (e) {
+      statusText = 'Could not set the volume: ${_describe(e)}';
+    }
+    await refreshVolume();
+    notifyListeners();
+    return done;
+  }
+
+  Future<void> saveCalibration(SoundCalibration calibration) async {
+    try {
+      await calibrations.save(calibration);
+    } catch (e) {
+      statusText = 'Could not save the calibration: ${_describe(e)}';
+      notifyListeners();
+    }
+  }
+
+  /// Plays [hz] steadily at [dbfs] on the chosen output until
+  /// [stopSteadyTone], for a sound level meter to read.
+  Future<void> playSteadyTone(double hz, double dbfs) async {
+    if (busy) return;
+    outputInfo = await _tones.start(deviceId: _output?.id);
+    await _tones.hold(frequency: hz, amplitude: amplitudeForDbfs(math.min(0, dbfs)));
+  }
+
+  Future<void> stopSteadyTone() async {
+    if (busy) return;
+    await _tones.stop().catchError((_) {});
   }
 
   /// The output in use for the current or last run.
@@ -289,6 +505,22 @@ class OddballSession extends ChangeNotifier {
     for (final r in runs)
       if (r.included) ...r.epochs,
   ];
+
+  /// Standard and rare tones in the included runs: played, and used in
+  /// [summary] (which also leaves out epochs over the amplitude threshold).
+  ({TrialCounts standard, TrialCounts rare}) trialCounts(ErpSummary summary) {
+    var standard = 0, rare = 0;
+    for (final r in runs.where((r) => r.included)) {
+      standard += r.trialsPlayed - r.raresPlayed;
+      rare += r.raresPlayed;
+    }
+    final waiting = _current?.included ?? false ? _extractor.pending : const <StimulusEvent>[];
+    final waitingRare = waiting.where((e) => e.rare).length;
+    return (
+      standard: TrialCounts(played: standard, used: summary.standardCount, waiting: waiting.length - waitingRare),
+      rare: TrialCounts(played: rare, used: summary.rareCount, waiting: waitingRare),
+    );
+  }
 
   /// Why tones in the included runs gave no epoch.
   Map<EpochRejection, int> get rejections {
@@ -316,11 +548,12 @@ class OddballSession extends ChangeNotifier {
 
   /// See [ErpSummary.compute]; [minus] makes a bipolar derivation.
   ErpSummary summary(List<int> channels, {List<int> minus = const [], bool tests = true}) =>
-      ErpSummary.compute(epochs, channels, minus: minus, rejectAbove: _rejectAbove, tests: tests);
+      ErpSummary.compute(epochs, channels, minus: minus, rejectAbove: _rejectAbove, baseline: _baseline, tests: tests);
 
   /// Adds saved runs that are not listed yet, unticked so they only count
-  /// once chosen.
+  /// once chosen, and reads the sound calibrations.
   Future<void> loadSaved() async {
+    await calibrations.load();
     final store = this.store;
     if (store == null) return;
     try {
@@ -353,6 +586,7 @@ class OddballSession extends ChangeNotifier {
       statusText = 'Could not list audio outputs: ${_describe(e)}';
     }
     notifyListeners();
+    await refreshVolume();
   }
 
   /// Plays the standard tone, then the rare one.
@@ -362,8 +596,10 @@ class OddballSession extends ChangeNotifier {
     _setState(OddballState.preparing, 'Playing the standard tone, then the rare one…');
     try {
       outputInfo = await _tones.start(deviceId: _output?.id);
-      final first = await _play(rare: false, at: null);
-      await _play(rare: true, at: first + 0.8);
+      final settings = _settings;
+      final levels = levelsFor(settings);
+      final first = await _play(rare: false, at: null, settings: settings, levels: levels);
+      await _play(rare: true, at: first + 0.8, settings: settings, levels: levels);
       await Future<void>.delayed(const Duration(milliseconds: 1400));
     } catch (e) {
       if (run == _run) statusText = 'Could not play tones: ${_describe(e)}';
@@ -381,8 +617,19 @@ class OddballSession extends ChangeNotifier {
       return;
     }
     final run = ++_run;
-    final settings = _settings;
     _setState(OddballState.preparing, 'Starting audio…');
+    // The Mac volume as it is now, not as last polled.
+    await refreshVolume();
+    if (run != _run) return;
+    final problem = levelProblem;
+    if (problem != null) {
+      _run++;
+      _setState(OddballState.idle, problem);
+      return;
+    }
+    final settings = _settings;
+    final levels = levelsFor(settings);
+    final calibrationDate = calibration?.date;
     try {
       outputInfo = await _tones.start(deviceId: _output?.id);
     } catch (e) {
@@ -396,7 +643,11 @@ class OddballSession extends ChangeNotifier {
     }
     final current = OddballRun(started: DateTime.now(), settings: settings)
       ..output = outputInfo?.device
-      ..latency = outputInfo?.latency;
+      ..latency = outputInfo?.latency
+      ..standardDbfs = levels.standard
+      ..rareDbfs = levels.rare
+      ..calibrationDate = calibrationDate
+      ..volume = _volume;
     _current = current;
     runs.insert(0, current);
     try {
@@ -442,7 +693,10 @@ class OddballSession extends ChangeNotifier {
       'Silently count the ${settings.rareIsHigh ? 'high' : 'low'} tones. Keep still and look at one spot.',
     );
     _marker(
-      'run_start standard=${_hz(settings.standardHz)} rare=${_hz(settings.rareHz)}',
+      'run_start standard=${_hz(settings.standardHz)} rare=${_hz(settings.rareHz)} '
+      'level=${calibrationDate != null ? '${settings.levelSpl}dB_SPL' : '${settings.levelDbfs}dB_FS'} '
+      'rareShare=${settings.rareProbability} '
+      'tone=${(settings.toneSeconds * 1000).round()}ms isi=${settings.minInterval}-${settings.maxInterval}s',
       LslEegOutlet.localClock(),
     );
 
@@ -459,7 +713,7 @@ class OddballSession extends ChangeNotifier {
       }
       final double onset;
       try {
-        onset = await _play(rare: rare, at: next, settings: settings);
+        onset = await _play(rare: rare, at: next, settings: settings, levels: levels);
       } catch (e) {
         await _end(run, 'Audio stopped after $trialsPlayed tones: ${_describe(e)}');
         return;
@@ -501,6 +755,7 @@ class OddballSession extends ChangeNotifier {
 
   @override
   void dispose() {
+    calibrations.removeListener(notifyListeners);
     _run++;
     _progressTimer?.cancel();
     _samples?.cancel();
@@ -513,15 +768,17 @@ class OddballSession extends ChangeNotifier {
 
   // ---------------------------------------------------------------------------
 
-  Future<double> _play({required bool rare, required double? at, OddballSettings? settings}) {
-    final s = settings ?? _settings;
-    return _tones.play(
-      frequency: rare ? s.rareHz : s.standardHz,
-      duration: s.toneSeconds,
-      amplitude: s.amplitude,
-      at: at,
-    );
-  }
+  Future<double> _play({
+    required bool rare,
+    required double? at,
+    required OddballSettings settings,
+    required ({double standard, double rare}) levels,
+  }) => _tones.play(
+    frequency: rare ? settings.rareHz : settings.standardHz,
+    duration: settings.toneSeconds,
+    amplitude: amplitudeForDbfs(rare ? levels.rare : levels.standard),
+    at: at,
+  );
 
   /// Ends run [run] if it is still the current one.
   Future<void> _end(int run, String message) async {
@@ -606,6 +863,9 @@ class OddballSession extends ChangeNotifier {
   }
 
   static String _hz(double hz) => '${hz.round()} Hz';
+
+  /// "50%" for a volume of 0.5.
+  static String percent(double volume) => '${(volume * 100).round()}%';
 
   static String _describe(Object e) => e is PlatformException ? e.message ?? e.code : e.toString();
 }

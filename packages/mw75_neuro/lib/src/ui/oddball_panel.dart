@@ -1,10 +1,16 @@
+import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../erp.dart';
 import '../oddball.dart';
+import '../sound_calibration.dart';
+import 'number_field.dart';
 import 'saved_runs.dart';
+import 'sound_calibration_dialog.dart';
 
 const _ink = Color(0xFF111216);
 const _muted = Color(0xFF69707D);
@@ -16,8 +22,9 @@ const erpStandardColor = Color(0xFF5D80BD);
 const erpRareColor = Color(0xFFE5484D);
 const erpDifferenceColor = Color(0xFF111216);
 
-/// Output, settings, start/stop and progress for an [OddballSession].
-class OddballControls extends StatelessWidget {
+/// Output, sound level, settings, start/stop and progress for an
+/// [OddballSession].
+class OddballControls extends StatefulWidget {
   const OddballControls({super.key, required this.session, this.startBlockedReason});
 
   final OddballSession session;
@@ -26,15 +33,40 @@ class OddballControls extends StatelessWidget {
   final String? startBlockedReason;
 
   @override
+  State<OddballControls> createState() => _OddballControlsState();
+}
+
+class _OddballControlsState extends State<OddballControls> {
+  /// Notices a change of Mac volume, which would put a calibrated level off.
+  Timer? _volumePoll;
+
+  OddballSession get session => widget.session;
+
+  @override
+  void initState() {
+    super.initState();
+    _volumePoll = Timer.periodic(const Duration(seconds: 2), (_) => session.refreshVolume());
+  }
+
+  @override
+  void dispose() {
+    _volumePoll?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: Listenable.merge([session, session.progress]),
       builder: (context, _) {
         final s = session.settings;
         final busy = session.busy;
-        final blocked = !busy && startBlockedReason != null;
+        final levelProblem = session.levelProblem;
+        final blockedReason = widget.startBlockedReason ?? (levelProblem == null ? null : 'Fix the sound level to start.');
+        final blocked = !busy && blockedReason != null;
         final info = session.outputInfo;
         final bluetooth = busy && info != null ? info.bluetooth : (session.output?.bluetooth ?? _defaultIsBluetooth);
+        void set(OddballSettings value) => session.settings = value;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -84,6 +116,8 @@ class OddballControls extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 14),
+            _SoundLevel(session: session),
+            const SizedBox(height: 14),
             _label('Rare tone'),
             SizedBox(
               width: double.infinity,
@@ -99,7 +133,7 @@ class OddballControls extends StatelessWidget {
                   ButtonSegment(value: false, label: Text('Low, ${s.lowHz.round()} Hz')),
                 ],
                 selected: {s.rareIsHigh},
-                onSelectionChanged: busy ? null : (v) => session.settings = s.copyWith(rareIsHigh: v.first),
+                onSelectionChanged: busy ? null : (v) => set(s.copyWith(rareIsHigh: v.first)),
               ),
             ),
             const SizedBox(height: 4),
@@ -112,14 +146,97 @@ class OddballControls extends StatelessWidget {
               children: [
                 Expanded(
                   child: _Dropdown<int>(
+                    label: 'Rare (deviant) share',
+                    // Percent, so the keys compare exactly.
+                    value: (s.rareProbability * 100).round(),
+                    enabled: !busy,
+                    items: {
+                      for (final p in OddballSettings.rareOptions)
+                        (p * 100).round(): '${(p * 100).round()}% (1 in ${_oneIn(p)})',
+                    },
+                    onChanged: (v) => set(s.copyWith(rareProbability: v / 100)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _Dropdown<int>(
+                    label: 'Tone length',
+                    value: (s.toneSeconds * 1000).round(),
+                    enabled: !busy,
+                    items: {for (final t in OddballSettings.toneOptions) (t * 1000).round(): '${(t * 1000).round()} ms'},
+                    onChanged: (v) => set(s.copyWith(toneSeconds: v / 1000)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _label('Time between tones (ISI)'),
+            Row(
+              children: [
+                Expanded(
+                  child: _Captioned(
+                    caption: 'Shortest',
+                    child: NumberStepper(
+                      value: s.minInterval,
+                      min: OddballSettings.shortestInterval,
+                      max: OddballSettings.longestInterval,
+                      step: 0.05,
+                      decimals: 2,
+                      unit: 's',
+                      enabled: !busy,
+                      onChanged: (v) => set(s.copyWith(minInterval: v, maxInterval: math.max(v, s.maxInterval))),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _Captioned(
+                    caption: 'Longest',
+                    child: NumberStepper(
+                      value: s.maxInterval,
+                      min: OddballSettings.shortestInterval,
+                      max: OddballSettings.longestInterval,
+                      step: 0.05,
+                      decimals: 2,
+                      unit: 's',
+                      enabled: !busy,
+                      onChanged: (v) => set(s.copyWith(maxInterval: v, minInterval: math.min(v, s.minInterval))),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              s.minInterval == s.maxInterval
+                  ? 'Onset to onset, every ${NumberStepper.format(s.minInterval, 2)} s. Make them differ to '
+                        'vary the gap so the next tone cannot be predicted.'
+                  : 'Onset to onset. Each gap is drawn at random between the two, so the next tone cannot '
+                        'be predicted.',
+              style: const TextStyle(fontSize: 11, color: _muted, height: 1.35),
+            ),
+            if (s.minInterval < ErpEpoch.end) ...[
+              const SizedBox(height: 6),
+              _Notice(
+                text:
+                    'Under ${(ErpEpoch.end * 1000).round()} ms, the next tone starts before the response to '
+                    'this one has been averaged (the plot runs to ${(ErpEpoch.end * 1000).round()} ms), so '
+                    'responses overlap and the late part of the average mixes both.',
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _Dropdown<int>(
                     label: 'Tones per run',
                     value: s.trials,
                     enabled: !busy,
                     items: {
                       for (final n in const [100, 200, 300, 400])
-                        n: '$n (~${(s.copyWith(trials: n).duration.inSeconds / 60).toStringAsFixed(0)} min)',
+                        n: '$n (~${_minutes(s.copyWith(trials: n).duration)} min)',
                     },
-                    onChanged: (v) => session.settings = s.copyWith(trials: v),
+                    onChanged: (v) => set(s.copyWith(trials: v)),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -147,7 +264,7 @@ class OddballControls extends StatelessWidget {
                       ? '0.5 Hz (keeps more of the slow P300)'
                       : '1 Hz (dry-electrode convention)',
               },
-              onChanged: (v) => session.settings = s.copyWith(highPassHz: v / 10),
+              onChanged: (v) => set(s.copyWith(highPassHz: v / 10)),
             ),
             const SizedBox(height: 14),
             Row(
@@ -208,7 +325,7 @@ class OddballControls extends StatelessWidget {
               const SizedBox(height: 6),
             ],
             Text(
-              blocked ? startBlockedReason! : session.statusText,
+              blocked ? blockedReason : session.statusText,
               style: TextStyle(
                 fontSize: 12,
                 color: session.state == OddballState.running ? _ink : _muted,
@@ -216,8 +333,6 @@ class OddballControls extends StatelessWidget {
                 height: 1.35,
               ),
             ),
-            const SizedBox(height: 10),
-            Text(_resultsLine(session), style: const TextStyle(fontSize: 11, color: _muted, height: 1.35)),
             const SizedBox(height: 12),
             RunChecklist(
               folder: session.store?.directory.path,
@@ -229,10 +344,7 @@ class OddballControls extends StatelessWidget {
                     live: identical(r, session.current),
                     included: r.included,
                     onChanged: identical(r, session.current) ? null : (v) => session.setIncluded(r, v),
-                    detail:
-                        '${r.trialsPlayed} tones, rare ${r.settings.rareIsHigh ? 'high' : 'low'} '
-                        '(${r.settings.rareHz.round()} Hz) · ${r.output ?? 'unknown output'}'
-                        '${r.settings.highPassHz == 0.5 ? '' : ' · ${r.settings.highPassHz} Hz high-pass'}',
+                    detail: _runDetail(r),
                   ),
               ],
             ),
@@ -244,29 +356,185 @@ class OddballControls extends StatelessWidget {
 
   bool get _defaultIsBluetooth => session.outputs.where((d) => d.isDefault).firstOrNull?.bluetooth ?? false;
 
-  static String _resultsLine(OddballSession s) {
-    final rare = s.epochs.where((e) => e.event.rare).length;
-    final standard = s.epochs.length - rare;
-    final lost = s.rejections.values.fold(0, (a, b) => a + b);
-    if (s.epochs.isEmpty && lost == 0) return 'No responses in the results yet.';
-    final parts = ['$standard standard and $rare rare responses'];
-    if (lost > 0) {
-      parts.add('$lost unusable (${[for (final e in s.rejections.entries) '${e.value} ${e.key.label}'].join(', ')})');
-    }
-    return parts.join('; ');
+  static String _oneIn(double p) {
+    final n = 1 / p;
+    return n == n.roundToDouble() ? n.toStringAsFixed(0) : n.toStringAsFixed(1);
   }
 
-  static Widget _label(String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 6),
-    child: Text(
-      text,
-      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
-    ),
+  static String _minutes(Duration d) => (d.inSeconds / 60).toStringAsFixed(0);
+
+  static String _runDetail(OddballRun r) {
+    final s = r.settings;
+    return '${r.trialsPlayed} tones, rare ${s.rareIsHigh ? 'high' : 'low'} (${s.rareHz.round()} Hz, '
+        '${(s.rareProbability * 100).round()}%) · ${r.levelLabel} · ${(s.toneSeconds * 1000).round()} ms tones, '
+        'ISI ${NumberStepper.format(s.minInterval, 2)}–${NumberStepper.format(s.maxInterval, 2)} s · '
+        '${r.output ?? 'unknown output'}'
+        '${s.highPassHz == 0.5 ? '' : ' · ${s.highPassHz} Hz high-pass'}';
+  }
+}
+
+Widget _label(String text) => Padding(
+  padding: const EdgeInsets.only(bottom: 6),
+  child: Text(
+    text,
+    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
+  ),
+);
+
+/// The tones' level: in dB SPL once the output is calibrated, otherwise
+/// relative to the loudest the app plays, with the calibration a click away.
+class _SoundLevel extends StatelessWidget {
+  const _SoundLevel({required this.session});
+
+  final OddballSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = session.settings;
+    final busy = session.busy;
+    final c = session.calibration;
+    final volume = session.volume;
+    final name = session.outputName ?? 'this output';
+    void set(OddballSettings value) => session.settings = value;
+    final children = <Widget>[
+      Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'Sound level',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
+            ),
+          ),
+          SizedBox(
+            height: 26,
+            child: TextButton.icon(
+              // Calibrations are kept by output name.
+              onPressed: busy || session.outputName == null ? null : () => showSoundCalibration(context, session),
+              icon: const Icon(Icons.tune_rounded, size: 14),
+              label: Text(
+                c == null ? 'Calibrate…' : 'Calibration…',
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 4),
+    ];
+    if (c == null) {
+      children.addAll([
+        NumberStepper(
+          value: s.levelDbfs,
+          min: OddballSettings.minDbfs,
+          max: 0,
+          step: 1,
+          unit: 'dB',
+          enabled: !busy,
+          onChanged: (v) => set(s.copyWith(levelDbfs: v)),
+        ),
+        const SizedBox(height: 6),
+        _Notice(
+          text:
+              '$name is not calibrated, so this level is relative: 0 dB is the loudest the app plays, and '
+              'the Mac volume${volume == null ? '' : ' (now ${OddballSession.percent(volume)})'} changes how loud '
+              'that is. Calibrate once with a sound level meter to set levels in dB SPL.',
+        ),
+      ]);
+    } else {
+      final loudest = session.loudestSpl!;
+      final top = math.max(OddballSettings.minSpl, math.min(OddballSettings.maxSpl, loudest.floorToDouble()));
+      children.add(
+        NumberStepper(
+          value: s.levelSpl,
+          min: OddballSettings.minSpl,
+          max: top,
+          step: 1,
+          unit: 'dB SPL',
+          enabled: !busy,
+          onChanged: (v) => set(s.copyWith(levelSpl: v)),
+        ),
+      );
+      if (c.levels.isNotEmpty) {
+        children.addAll([
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final level in c.levels)
+                ChoiceChip(
+                  label: Text('${formatDb(level)} dB'),
+                  selected: s.levelSpl == level,
+                  onSelected: busy || level > loudest + 0.05 ? null : (_) => set(s.copyWith(levelSpl: level)),
+                  labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                  visualDensity: VisualDensity.compact,
+                  showCheckmark: false,
+                ),
+            ],
+          ),
+        ]);
+      }
+      children.addAll([
+        const SizedBox(height: 6),
+        Text(
+          'Calibrated ${RunChecklist.when(c.date)}'
+          '${c.volume == null ? '' : ' at ${OddballSession.percent(c.volume!)} Mac volume'}; '
+          'up to ${loudest.floor()} dB SPL.'
+          '${c.levels.isEmpty ? '' : ' Quick picks are levels checked with the meter.'}',
+          style: const TextStyle(fontSize: 11, color: _muted, height: 1.35),
+        ),
+      ]);
+      final problem = session.levelProblem;
+      if (problem != null) {
+        children.addAll([
+          const SizedBox(height: 6),
+          _Notice(
+            text: problem,
+            action: session.volumeChanged
+                ? ('Set volume to ${OddballSession.percent(c.volume!)}', session.restoreVolume)
+                : null,
+          ),
+        ]);
+      } else if (s.levelSpl > OddballSettings.loudSpl) {
+        children.addAll([
+          const SizedBox(height: 6),
+          _Notice(
+            text:
+                'Above ${OddballSettings.loudSpl.round()} dB SPL. Check this is the level you mean, and keep '
+                'sessions at this level short.',
+          ),
+        ]);
+      }
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+  }
+}
+
+/// A small caption above a control.
+class _Captioned extends StatelessWidget {
+  const _Captioned({required this.caption, required this.child});
+
+  final String caption;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(caption, style: const TextStyle(fontSize: 11, color: _muted)),
+      const SizedBox(height: 4),
+      child,
+    ],
   );
 }
 
 /// The average response for [channels]: standard and rare traces with ±1 SE
-/// bands, their difference, and the two tests.
+/// bands, their difference, the two tests and how many tones were used. The
+/// baseline can be changed from a menu or by dragging across the plot.
 class ErpPanel extends StatelessWidget {
   const ErpPanel({super.key, required this.session, required this.channels, this.minus = const []});
 
@@ -286,33 +554,46 @@ class ErpPanel extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _Legend(summary: summary),
-            const SizedBox(height: 8),
-            Expanded(child: ErpPlot(summary: summary)),
-            const SizedBox(height: 12),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: _TestTile(
-                    title: 'Response to every tone',
-                    detail: 'Mean ${_ms(ErpSummary.responseWindow)} after onset (auditory N1) vs zero',
-                    test: summary.response,
-                    needs: 'Needs ${ErpSummary.minTrials} responses',
-                    finished: !session.busy,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _TestTile(
-                    title: 'Rare vs standard',
-                    detail: 'Rare minus standard, ${_ms(ErpSummary.oddballWindow)} (P300)',
-                    test: summary.oddball,
-                    needs: 'Needs ${ErpSummary.minRare} rare and ${ErpSummary.minRare} standard',
-                    finished: !session.busy,
-                  ),
-                ),
+                Expanded(child: _Legend(summary: summary)),
+                const SizedBox(width: 10),
+                _BaselinePicker(session: session),
               ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ErpPlot(summary: summary, onBaselineChanged: (window) => session.baseline = window),
+            ),
+            const SizedBox(height: 12),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: _TestTile(
+                      title: 'Response to every tone',
+                      detail: 'Mean ${_ms(ErpSummary.responseWindow)} after onset (auditory N1) vs zero',
+                      test: summary.response,
+                      needs: 'Needs ${ErpSummary.minTrials} responses',
+                      finished: !session.busy,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _TestTile(
+                      title: 'Rare vs standard',
+                      detail: 'Rare minus standard, ${_ms(ErpSummary.oddballWindow)} (P300)',
+                      test: summary.oddball,
+                      needs: 'Needs ${ErpSummary.minRare} rare and ${ErpSummary.minRare} standard',
+                      finished: !session.busy,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: _TrialsTile(session: session, summary: summary)),
+                ],
+              ),
             ),
           ],
         );
@@ -430,15 +711,20 @@ class ErpChannelGrid extends StatelessWidget {
 }
 
 /// Standard and rare averages (with ±1 SE bands in the full size), their
-/// difference, onset at 0 and the test windows shaded. Positive is up.
-class ErpPlot extends StatelessWidget {
-  const ErpPlot({super.key, required this.summary, this.range, this.compact = false});
+/// difference, onset at 0, the test windows and the baseline shaded. Positive
+/// is up.
+///
+/// With [onBaselineChanged], dragging across the part before onset picks a
+/// new baseline window, and hovering reads out the traces.
+class ErpPlot extends StatefulWidget {
+  const ErpPlot({super.key, required this.summary, this.range, this.compact = false, this.onBaselineChanged});
 
   final ErpSummary summary;
 
   /// Half-height in µV; chosen from the data when null.
   final double? range;
   final bool compact;
+  final ValueChanged<(double, double)>? onBaselineChanged;
 
   static const _ranges = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0];
 
@@ -446,8 +732,21 @@ class ErpPlot extends StatelessWidget {
   static double niceRange(double peak) => _ranges.firstWhere((r) => r >= peak && r >= 2, orElse: () => 1000);
 
   @override
+  State<ErpPlot> createState() => _ErpPlotState();
+}
+
+class _ErpPlotState extends State<ErpPlot> {
+  /// Where the pointer is, seconds after onset.
+  double? _hover;
+
+  /// The window being dragged out, and where the drag began.
+  (double, double)? _drag;
+  double _anchor = 0;
+
+  @override
   Widget build(BuildContext context) {
-    if (!compact && summary.isEmpty) {
+    final summary = widget.summary;
+    if (!widget.compact && summary.isEmpty) {
       return const Center(
         child: Text(
           'The average appears once the first tones have played\n(each response is ready about 2 s after its tone).',
@@ -456,28 +755,82 @@ class ErpPlot extends StatelessWidget {
         ),
       );
     }
-    return RepaintBoundary(
+    final paint = RepaintBoundary(
       child: CustomPaint(
-        painter: _ErpPainter(summary, range: range ?? niceRange(summary.peak), compact: compact),
+        painter: _ErpPainter(
+          summary,
+          range: widget.range ?? ErpPlot.niceRange(summary.peak),
+          compact: widget.compact,
+          baseline: _drag ?? summary.baseline,
+          hover: _hover,
+        ),
         size: Size.infinite,
       ),
+    );
+    final onBaselineChanged = widget.onBaselineChanged;
+    if (widget.compact || onBaselineChanged == null) return paint;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final plot = _ErpPainter.area(constraints.biggest, compact: false);
+        double? timeAt(Offset p) =>
+            plot.contains(p) ? ErpEpoch.start + (p.dx - plot.left) / plot.width * (ErpEpoch.end - ErpEpoch.start) : null;
+        // The baseline has to come before onset; 10 ms steps.
+        double beforeOnset(Offset p) {
+          final t = ErpEpoch.start + (p.dx - plot.left) / plot.width * (ErpEpoch.end - ErpEpoch.start);
+          return (t.clamp(ErpEpoch.start, 0.0) * 100).round() / 100;
+        }
+
+        return MouseRegion(
+          cursor: SystemMouseCursors.precise,
+          onHover: (e) => setState(() => _hover = timeAt(e.localPosition)),
+          onExit: (_) => setState(() => _hover = null),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            // The window starts where the button went down, not after the slop.
+            dragStartBehavior: DragStartBehavior.down,
+            onHorizontalDragStart: (d) => setState(() {
+              _anchor = beforeOnset(d.localPosition);
+              _drag = (_anchor, _anchor);
+            }),
+            onHorizontalDragUpdate: (d) => setState(() {
+              final t = beforeOnset(d.localPosition);
+              _drag = (math.min(_anchor, t), math.max(_anchor, t));
+              _hover = timeAt(d.localPosition);
+            }),
+            onHorizontalDragEnd: (_) {
+              final window = _drag;
+              setState(() => _drag = null);
+              if (window != null && window.$2 - window.$1 >= ErpSummary.minBaseline - 1e-9) onBaselineChanged(window);
+            },
+            onHorizontalDragCancel: () => setState(() => _drag = null),
+            child: paint,
+          ),
+        );
+      },
     );
   }
 }
 
 class _ErpPainter extends CustomPainter {
-  _ErpPainter(this.summary, {required this.range, required this.compact});
+  _ErpPainter(this.summary, {required this.range, required this.compact, this.baseline, this.hover});
 
   final ErpSummary summary;
   final double range;
   final bool compact;
 
+  /// Shaded in the full size, seconds after onset.
+  final (double, double)? baseline;
+
+  /// Read out in the full size, seconds after onset.
+  final double? hover;
+
+  /// The traces' area within [size].
+  static Rect area(Size size, {required bool compact}) =>
+      Rect.fromLTRB(compact ? 0.0 : 44.0, compact ? 2.0 : 16.0, size.width, size.height - (compact ? 0.0 : 20.0));
+
   @override
   void paint(Canvas canvas, Size size) {
-    final left = compact ? 0.0 : 44.0;
-    final bottom = compact ? 0.0 : 20.0;
-    final top = compact ? 2.0 : 16.0;
-    final plot = Rect.fromLTRB(left, top, size.width, size.height - bottom);
+    final plot = area(size, compact: compact);
     if (plot.width <= 0 || plot.height <= 0) return;
     double x(double t) => plot.left + plot.width * (t - ErpEpoch.start) / (ErpEpoch.end - ErpEpoch.start);
     double y(double v) => plot.center.dy - v / range * plot.height / 2;
@@ -499,9 +852,11 @@ class _ErpPainter extends CustomPainter {
       label.paint(canvas, at + Offset(dx, -label.height / 2));
     }
 
-    // Test windows.
+    // Baseline and test windows.
+    final baseline = this.baseline;
     if (!compact) {
       for (final (window, name, color) in [
+        if (baseline != null) (baseline, 'Baseline', const Color(0x12111216)),
         (ErpSummary.responseWindow, 'N1', const Color(0x145D80BD)),
         (ErpSummary.oddballWindow, 'P300', const Color(0x1FE5C100)),
       ]) {
@@ -570,11 +925,69 @@ class _ErpPainter extends CustomPainter {
     final diff = s.difference;
     if (diff != null && !compact) trace(diff, erpDifferenceColor, 1.2);
     canvas.restore();
+
+    final hover = this.hover;
+    if (!compact && hover != null) _readout(canvas, plot, x(hover), hover, diff);
+  }
+
+  /// A line at [time] and a box with each trace's value there.
+  void _readout(Canvas canvas, Rect plot, double at, double time, Float64List? diff) {
+    canvas.drawLine(
+      Offset(at, plot.top),
+      Offset(at, plot.bottom),
+      Paint()
+        ..color = const Color(0x66111216)
+        ..strokeWidth = 1,
+    );
+    final i = ((time - ErpEpoch.start) * ErpEpoch.rate).round().clamp(0, ErpEpoch.length - 1);
+    String uv(double v) => '${v >= 0 ? '+' : '−'}${v.abs().toStringAsFixed(1)} µV';
+    final s = summary;
+    final lines = [
+      ('${(ErpEpoch.timeAt(i) * 1000).round()} ms', _ink, FontWeight.w800),
+      if (s.standardCount > 0) ('Standard ${uv(s.standardMean[i])}', erpStandardColor, FontWeight.w600),
+      if (s.rareCount > 0) ('Rare ${uv(s.rareMean[i])}', erpRareColor, FontWeight.w600),
+      if (diff != null) ('Rare − standard ${uv(diff[i])}', erpDifferenceColor, FontWeight.w600),
+    ];
+    final painters = [
+      for (final (text, color, weight) in lines)
+        TextPainter(
+          text: TextSpan(
+            text: text,
+            style: TextStyle(fontSize: 10.5, color: color, fontWeight: weight, fontFeatures: _tabular),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout(),
+    ];
+    const pad = 6.0, gap = 2.0;
+    final width = painters.fold(0.0, (w, p) => math.max(w, p.width)) + 2 * pad;
+    final height = painters.fold(0.0, (h, p) => h + p.height) + gap * (painters.length - 1) + 2 * pad;
+    // Beside the line, on whichever side has room.
+    final left = at + 8 + width <= plot.right ? at + 8 : at - 8 - width;
+    final box = Rect.fromLTWH(math.max(plot.left, left), plot.top + 4, width, height);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(box, const Radius.circular(5)),
+      Paint()..color = const Color(0xF2FFFFFF),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(box, const Radius.circular(5)),
+      Paint()
+        ..color = _line
+        ..style = PaintingStyle.stroke,
+    );
+    var y = box.top + pad;
+    for (final p in painters) {
+      p.paint(canvas, Offset(box.left + pad, y));
+      y += p.height + gap;
+    }
   }
 
   @override
   bool shouldRepaint(covariant _ErpPainter old) =>
-      old.summary != summary || old.range != range || old.compact != compact;
+      old.summary != summary ||
+      old.range != range ||
+      old.compact != compact ||
+      old.baseline != baseline ||
+      old.hover != hover;
 }
 
 /// "300–600 ms" for a window in seconds.
@@ -614,13 +1027,182 @@ class _Legend extends StatelessWidget {
         key(erpStandardColor, 'Standard (${summary.standardCount})'),
         key(erpRareColor, 'Rare (${summary.rareCount})'),
         key(erpDifferenceColor, 'Rare − standard'),
-        Text(
-          summary.artifactCount > 0
-              ? '${summary.artifactCount} left out as artifacts · shading ±1 SE · positive up'
-              : 'Shading ±1 SE · positive up',
-          style: const TextStyle(fontSize: 11, color: _muted),
-        ),
+        const Text('Shading ±1 SE · positive up', style: TextStyle(fontSize: 11, color: _muted)),
       ],
+    );
+  }
+}
+
+/// The baseline window: the usual choices, plus one dragged out on the plot.
+class _BaselinePicker extends StatelessWidget {
+  const _BaselinePicker({required this.session});
+
+  final OddballSession session;
+
+  static String _label((double, double) w) =>
+      '${NumberStepper.format(w.$1 * 1000, 0)} to ${NumberStepper.format(w.$2 * 1000, 0)} ms';
+
+  @override
+  Widget build(BuildContext context) {
+    final current = session.baseline;
+    final options = [...ErpSummary.baselineOptions, if (!ErpSummary.baselineOptions.contains(current)) current];
+    return Tooltip(
+      message:
+          'Each average is shifted so its mean over this window is zero. Drag across the plot before '
+          '0 ms to choose your own window.',
+      waitDuration: const Duration(milliseconds: 400),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Baseline',
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _ink),
+          ),
+          const SizedBox(width: 6),
+          Container(
+            height: 28,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: _line),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<(double, double)>(
+                value: current,
+                isDense: true,
+                style: const TextStyle(fontSize: 11, color: _ink, fontFeatures: _tabular),
+                items: [
+                  for (final w in options)
+                    DropdownMenuItem(
+                      value: w,
+                      child: Text(
+                        ErpSummary.baselineOptions.contains(w) ? _label(w) : '${_label(w)} (dragged)',
+                      ),
+                    ),
+                ],
+                onChanged: (w) {
+                  if (w != null) session.baseline = w;
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Tones played, used in the average and left out, for standard and rare.
+class _TrialsTile extends StatelessWidget {
+  const _TrialsTile({required this.session, required this.summary});
+
+  final OddballSession session;
+  final ErpSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final (:standard, :rare) = session.trialCounts(summary);
+    final played = standard.played + rare.played;
+    final settled = played - standard.waiting - rare.waiting;
+    final used = standard.used + rare.used;
+    final rejected = standard.rejected + rare.rejected;
+
+    // Why: lost EEG, over the threshold, and tones cut off by stopping a run.
+    final lost = session.rejections;
+    final lostTotal = lost.values.fold(0, (a, b) => a + b);
+    final cutOff = math.max(0, rejected - lostTotal - summary.artifactCount);
+    final reasons = [
+      if (summary.artifactCount > 0) '${summary.artifactCount} over ${session.rejectAbove?.round()} µV',
+      for (final e in lost.entries)
+        if (e.value > 0) '${e.value} ${e.key.label}',
+      if (cutOff > 0) '$cutOff cut off by stopping',
+      if (settled < played) '${played - settled} waiting for EEG',
+    ];
+
+    const head = TextStyle(fontSize: 10, color: _muted, fontWeight: FontWeight.w700);
+    const cell = TextStyle(fontSize: 11.5, color: _ink, fontWeight: FontWeight.w700, fontFeatures: _tabular);
+    Widget number(int n, {TextStyle style = cell}) => Text('$n', textAlign: TextAlign.right, style: style);
+    TableRow row(String name, Color color, TrialCounts c) => TableRow(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+              ),
+              const SizedBox(width: 5),
+              Text(name, style: const TextStyle(fontSize: 11, color: _ink)),
+            ],
+          ),
+        ),
+        number(c.used),
+        number(c.rejected, style: cell.copyWith(color: c.rejected > 0 ? erpRareColor : _ink)),
+        number(c.played, style: cell.copyWith(color: _muted, fontWeight: FontWeight.w400)),
+      ],
+    );
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Trials used',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _ink),
+                ),
+              ),
+              if (settled > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(color: const Color(0xFFF1F2F5), borderRadius: BorderRadius.circular(10)),
+                  child: Text(
+                    '${(used / settled * 100).round()}%',
+                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: _ink),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Table(
+            columnWidths: const {
+              0: FlexColumnWidth(),
+              1: IntrinsicColumnWidth(),
+              2: IntrinsicColumnWidth(),
+              3: IntrinsicColumnWidth(),
+            },
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            children: [
+              TableRow(
+                children: [
+                  const SizedBox(),
+                  for (final h in const ['Used', 'Rejected', 'Played'])
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text(h, textAlign: TextAlign.right, style: head),
+                    ),
+                ],
+              ),
+              row('Standard', erpStandardColor, standard),
+              row('Rare', erpRareColor, rare),
+            ],
+          ),
+          if (reasons.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(reasons.join(' · '), style: const TextStyle(fontSize: 10.5, color: _muted, height: 1.3)),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -804,19 +1386,48 @@ class _Dropdown<T> extends StatelessWidget {
 }
 
 class _Notice extends StatelessWidget {
-  const _Notice({required this.text});
+  const _Notice({required this.text, this.action});
 
   final String text;
 
+  /// A button under the text: its label and what it does.
+  final (String, VoidCallback)? action;
+
+  static const _brown = Color(0xFF7A4B00);
+
   @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-    decoration: BoxDecoration(
-      color: const Color(0xFFFFF7E6),
-      borderRadius: BorderRadius.circular(7),
-      border: Border.all(color: const Color(0xFFF3D9A4)),
-    ),
-    child: Text(text, style: const TextStyle(fontSize: 11, color: Color(0xFF7A4B00), height: 1.35)),
-  );
+  Widget build(BuildContext context) {
+    final action = this.action;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7E6),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: const Color(0xFFF3D9A4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(text, style: const TextStyle(fontSize: 11, color: _brown, height: 1.35)),
+          if (action != null) ...[
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 28,
+              child: OutlinedButton(
+                onPressed: action.$2,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _brown,
+                  side: const BorderSide(color: Color(0xFFE2B865)),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                ),
+                child: Text(action.$1, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }

@@ -16,7 +16,8 @@ class StimulusEvent {
 
 /// Ch1–Ch12 around one tone, in µV: band-passed, resampled to [rate] Hz from
 /// [start] to [end] seconds after onset, and baseline-corrected to the mean
-/// before onset.
+/// before onset ([baseline]). [ErpSummary.compute] can re-reference averages to
+/// another window afterwards.
 class ErpEpoch {
   ErpEpoch(this.event, this.channels, {required this.lostFraction});
 
@@ -29,6 +30,9 @@ class ErpEpoch {
 
   /// Samples before onset, the baseline.
   static const baselineLength = 50;
+
+  /// The baseline epochs are corrected to when cut, in seconds after onset.
+  static const baseline = (start, 0.0);
 
   static double timeAt(int i) => start + i / rate;
 
@@ -93,6 +97,9 @@ class EpochExtractor {
   late final _filter = ErpFilter(highPass: highPass, rate: _gridRate.toDouble());
 
   void addEvent(StimulusEvent event) => _pending.add(event);
+
+  /// Tones still waiting for the EEG after them.
+  List<StimulusEvent> get pending => List.unmodifiable(_pending);
 
   /// Adds samples and returns the tones whose epochs are now complete.
   List<EpochOutcome> addSamples(List<Mw75Sample> samples) {
@@ -284,7 +291,9 @@ class ErpSummary {
     required this.rareSe,
     required this.standardCount,
     required this.rareCount,
-    required this.artifactCount,
+    required this.standardArtifacts,
+    required this.rareArtifacts,
+    required this.baseline,
     this.response,
     this.oddball,
   });
@@ -297,6 +306,12 @@ class ErpSummary {
   /// in Eidel et al. 2024, both cEEGrid), hence a window reaching 600 ms.
   static const oddballWindow = (0.3, 0.6);
 
+  /// Baseline windows offered besides one chosen by hand, in seconds.
+  static const baselineOptions = [ErpEpoch.baseline, (-0.1, 0.0), (-0.05, 0.0)];
+
+  /// Shortest baseline window that can be chosen.
+  static const minBaseline = 0.02;
+
   /// Fewest epochs before a test is run.
   static const minTrials = 10;
   static const minRare = 5;
@@ -305,6 +320,11 @@ class ErpSummary {
   /// [channels] minus the mean of [minus] (a bipolar derivation such as an
   /// ear cup's top electrode minus its bottom one). Epochs whose trace spans
   /// more than [rejectAbove] µV (eye movements, jaw clenches) are left out.
+  ///
+  /// Each trace is re-referenced to its mean over [baseline] (seconds after
+  /// onset; the end is excluded). The epochs were corrected to
+  /// [ErpEpoch.baseline] when cut, a constant shift, so any window gives the
+  /// same result as if they had been cut with it.
   ///
   /// With [tests], also runs two permutation tests: whether the mean in
   /// [responseWindow] over all tones differs from zero (sign flips), and
@@ -315,18 +335,25 @@ class ErpSummary {
     List<int> channels, {
     List<int> minus = const [],
     double? rejectAbove,
+    (double, double) baseline = ErpEpoch.baseline,
     bool tests = true,
     int permutations = 2000,
   }) {
     final standard = <Float64List>[];
     final rare = <Float64List>[];
-    var artifacts = 0;
+    var standardArtifacts = 0, rareArtifacts = 0;
     for (final e in epochs) {
-      final trace = _derive(e, channels, minus);
+      var trace = _derive(e, channels, minus);
+      // A constant shift does not change the peak-to-peak span.
       if (rejectAbove != null && _peakToPeak(trace) > rejectAbove) {
-        artifacts++;
+        if (e.event.rare) {
+          rareArtifacts++;
+        } else {
+          standardArtifacts++;
+        }
         continue;
       }
+      if (baseline != ErpEpoch.baseline) trace = _rebaseline(trace, baseline);
       (e.event.rare ? rare : standard).add(trace);
     }
     final (standardMean, standardSe) = _meanAndSe(standard);
@@ -356,7 +383,9 @@ class ErpSummary {
       rareSe: rareSe,
       standardCount: standard.length,
       rareCount: rare.length,
-      artifactCount: artifacts,
+      standardArtifacts: standardArtifacts,
+      rareArtifacts: rareArtifacts,
+      baseline: baseline,
       response: response,
       oddball: oddball,
     );
@@ -369,8 +398,13 @@ class ErpSummary {
   final int standardCount;
   final int rareCount;
 
-  /// Epochs left out by the amplitude threshold.
-  final int artifactCount;
+  /// Epochs left out by the amplitude threshold, by tone.
+  final int standardArtifacts;
+  final int rareArtifacts;
+  int get artifactCount => standardArtifacts + rareArtifacts;
+
+  /// The window the traces are baseline-corrected to.
+  final (double, double) baseline;
   final WindowTest? response;
   final WindowTest? oddball;
 
@@ -405,6 +439,18 @@ class ErpSummary {
 
   /// Mean of [trace] over [window], in µV.
   static double windowMean(Float64List trace, (double, double) window) => _windowMean(trace, window);
+
+  /// [trace] minus its mean over [window]; a new list.
+  static Float64List _rebaseline(Float64List trace, (double, double) window) {
+    final from = ((window.$1 - ErpEpoch.start) * ErpEpoch.rate).round().clamp(0, ErpEpoch.length - 1);
+    final to = ((window.$2 - ErpEpoch.start) * ErpEpoch.rate).round().clamp(from + 1, ErpEpoch.length);
+    var mean = 0.0;
+    for (var i = from; i < to; i++) {
+      mean += trace[i];
+    }
+    mean /= to - from;
+    return Float64List.fromList([for (final v in trace) v - mean]);
+  }
 
   static Float64List _derive(ErpEpoch e, List<int> channels, List<int> minus) {
     final plus = _average(e, channels);

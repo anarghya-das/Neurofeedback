@@ -77,6 +77,22 @@ class ToneOutput {
     return onset!;
   }
 
+  /// Plays a steady [frequency] tone until [release], for a sound level meter
+  /// to read. Needs [start] first; cancels any scheduled tones.
+  Future<void> hold({required double frequency, required double amplitude}) =>
+      _methods.invokeMethod<void>('audioHold', {'frequency': frequency, 'amplitude': amplitude});
+
+  /// Stops a tone started with [hold]; the output stays started.
+  Future<void> release() => _methods.invokeMethod<void>('audioRelease');
+
+  /// The volume macOS has for [deviceId] (the system output when null), 0–1,
+  /// or null if it has none that can be read.
+  Future<double?> volume({int? deviceId}) => _methods.invokeMethod<double>('audioVolume', {'deviceId': deviceId});
+
+  /// Sets that volume; false if the output does not allow it.
+  Future<bool> setVolume(double volume, {int? deviceId}) async =>
+      await _methods.invokeMethod<bool>('audioSetVolume', {'deviceId': deviceId, 'volume': volume}) ?? false;
+
   Future<void> stop() => _methods.invokeMethod<void>('audioStop');
 
   /// Speaks [text] on the system output, interrupting anything still being

@@ -94,6 +94,27 @@ final class ToneStimulator {
     return start + uptimeToLsl + latency
   }
 
+  /// Plays a steady tone until `release`, for reading on a sound level meter. Anything
+  /// scheduled with `play` is cancelled.
+  func hold(frequency: Double, amplitude: Double) throws {
+    guard let engine = engine, engine.isRunning, let player = player, let format = format else {
+      throw ToneError("Audio output stopped. Was the output device changed or disconnected?")
+    }
+    player.stop()
+    // One second of a whole number of cycles loops without a seam; the first copy fades in.
+    let hz = max(1, frequency.rounded())
+    player.scheduleBuffer(try steady(frequency: hz, amplitude: amplitude, fadeIn: true, format: format), at: nil, options: [])
+    player.scheduleBuffer(try steady(frequency: hz, amplitude: amplitude, fadeIn: false, format: format), at: nil, options: .loops)
+    player.play()
+  }
+
+  /// Stops a tone started with `hold`; the engine keeps running.
+  func release() {
+    guard let player = player else { return }
+    player.stop()
+    player.play()
+  }
+
   func stop() {
     player?.stop()
     engine?.stop()
@@ -101,6 +122,55 @@ final class ToneStimulator {
     engine = nil
     format = nil
     buffers = [:]
+  }
+
+  private func steady(frequency: Double, amplitude: Double, fadeIn: Bool, format: AVAudioFormat) throws
+    -> AVAudioPCMBuffer
+  {
+    let rate = format.sampleRate
+    let frames = Int(rate.rounded())
+    guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
+      let channels = buffer.floatChannelData
+    else { throw ToneError("Could not create the tone.") }
+    buffer.frameLength = AVAudioFrameCount(frames)
+    let rampFrames = Int(ToneStimulator.ramp * rate)
+    for i in 0..<frames {
+      var gain = amplitude
+      if fadeIn && i < rampFrames { gain *= 0.5 - 0.5 * cos(Double.pi * Double(i) / Double(rampFrames)) }
+      let value = Float(gain * sin(2 * Double.pi * frequency * Double(i) / rate))
+      for c in 0..<Int(format.channelCount) { channels[c][i] = value }
+    }
+    return buffer
+  }
+
+  // MARK: Output volume
+
+  /// The volume macOS shows for an output (`kAudioHardwareServiceDeviceProperty_VirtualMainVolume`,
+  /// spelled out because the named constant needs macOS 12).
+  private static let virtualMainVolume = AudioObjectPropertySelector(0x766D_7663)  // 'vmvc'
+
+  /// The output's volume, 0–1, for `deviceId` or the system output when nil; nil if it has
+  /// none that can be read.
+  static func volume(deviceId: Int?) -> Double? {
+    let id = deviceId.map { AudioDeviceID($0) } ?? defaultOutputDevice()
+    var address = address(virtualMainVolume, kAudioObjectPropertyScopeOutput)
+    guard AudioObjectHasProperty(id, &address) else { return nil }
+    var value: Float32 = 0
+    var size = UInt32(MemoryLayout<Float32>.size)
+    guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr else { return nil }
+    return Double(value)
+  }
+
+  /// Sets the output's volume, 0–1; false if it cannot be set.
+  static func setVolume(deviceId: Int?, volume: Double) -> Bool {
+    let id = deviceId.map { AudioDeviceID($0) } ?? defaultOutputDevice()
+    var address = address(virtualMainVolume, kAudioObjectPropertyScopeOutput)
+    var settable: DarwinBoolean = false
+    guard AudioObjectHasProperty(id, &address),
+      AudioObjectIsPropertySettable(id, &address, &settable) == noErr, settable.boolValue
+    else { return false }
+    var value = Float32(min(max(volume, 0), 1))
+    return AudioObjectSetPropertyData(id, &address, 0, nil, UInt32(MemoryLayout<Float32>.size), &value) == noErr
   }
 
   private func tone(frequency: Double, duration: Double, amplitude: Double, format: AVAudioFormat) throws

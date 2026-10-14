@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +23,14 @@ class _SilentTones implements ToneOutput {
   Future<void> stop() async {}
   @override
   Future<void> speak(String? text) async {}
+  @override
+  Future<void> hold({required double frequency, required double amplitude}) async {}
+  @override
+  Future<void> release() async {}
+  @override
+  Future<double?> volume({int? deviceId}) async => null;
+  @override
+  Future<bool> setVolume(double volume, {int? deviceId}) async => false;
 }
 
 /// Epochs with an N1 on every tone and a P300 on rare ones, plus noise.
@@ -60,7 +69,28 @@ void main() {
       }
       await loader.load();
 
-      final session = OddballSession(headset: Mw75Headset(), tones: _SilentTones(), publishMarkers: false)
+      final calibrations = SoundCalibrations();
+      if (count > 0) {
+        // Results with a calibrated output; the empty view shows an uncalibrated one.
+        await calibrations.save(
+          SoundCalibration(
+            device: 'MW75 Neuro',
+            date: DateTime(2026, 10, 9, 1, 30),
+            volume: 0.5,
+            points: const [
+              CalibrationPoint(hz: 1000, dbfs: -30, spl: 62),
+              CalibrationPoint(hz: 2000, dbfs: -30, spl: 65),
+            ],
+            levels: const [60, 70, 80],
+          ),
+        );
+      }
+      final session = OddballSession(
+        headset: Mw75Headset(),
+        tones: _SilentTones(),
+        calibrations: calibrations,
+        publishMarkers: false,
+      )
         ..outputs = const [
           AudioOutputDevice(id: 1, name: 'MW75 Neuro', isDefault: true, bluetooth: true),
           AudioOutputDevice(id: 2, name: 'MacBook Pro Speakers', isDefault: false, bluetooth: false),
@@ -69,7 +99,9 @@ void main() {
         session.runs.add(
           OddballRun(started: DateTime(2026, 10, 9, 2, 1), settings: const OddballSettings())
             ..output = 'MW75 Neuro'
-            ..trialsPlayed = count
+            // Three more tones than epochs: two standard and one rare lost.
+            ..trialsPlayed = count + 3
+            ..raresPlayed = count ~/ 5 + 1
             ..epochs.addAll(_epochs(count))
             ..rejections[EpochRejection.lostData] = 3,
         );
@@ -150,7 +182,12 @@ void main() {
       if (count > 0) {
         expect(find.text('Rare (30)'), findsOneWidget);
         expect(find.text('Clear'), findsNWidgets(2));
+        expect(find.text('Trials used'), findsOneWidget);
+        expect(find.textContaining('3 too much data lost'), findsOneWidget);
+        expect(find.text('70 dB SPL'), findsNothing);
+        expect(find.text('Calibration…'), findsOneWidget);
       } else {
+        expect(find.text('Calibrate…'), findsOneWidget);
         expect(find.text('Waiting'), findsNWidgets(2));
       }
       if (renderPath == null) return;
@@ -161,4 +198,81 @@ void main() {
       });
     });
   }
+
+  testWidgets('dragging across the plot before onset sets the baseline; hovering reads it out', (tester) async {
+    final loader = FontLoader('Roboto');
+    for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
+      final bytes = File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync();
+      loader.addFont(Future.value(ByteData.sublistView(bytes)));
+    }
+    await loader.load();
+    final session = OddballSession(headset: Mw75Headset(), tones: _SilentTones(), publishMarkers: false);
+    addTearDown(session.dispose);
+    session.runs.add(
+      OddballRun(started: DateTime(2026, 10, 9, 2, 1), settings: const OddballSettings())
+        ..trialsPlayed = 150
+        ..raresPlayed = 30
+        ..epochs.addAll(_epochs(150)),
+    );
+
+    final key = GlobalKey();
+    await tester.binding.setSurfaceSize(const Size(900, 520));
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(
+          body: RepaintBoundary(
+            key: key,
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(20),
+              child: ErpPanel(session: session, channels: List.generate(12, (i) => i)),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('−200 to 0 ms'), findsOneWidget);
+
+    final box = tester.getRect(find.byType(ErpPlot));
+    final plot = Rect.fromLTRB(box.left + 44, box.top + 16, box.right, box.bottom - 20);
+    Offset at(double seconds) =>
+        Offset(plot.left + (seconds - ErpEpoch.start) / (ErpEpoch.end - ErpEpoch.start) * plot.width, plot.center.dy);
+
+    final drag = await tester.startGesture(at(-0.15), kind: PointerDeviceKind.mouse);
+    await drag.moveTo(at(-0.1));
+    await drag.moveTo(at(-0.05));
+    await drag.up();
+    await tester.pump();
+    expect(session.baseline, (-0.15, -0.05));
+    expect(find.text('−150 to −50 ms (dragged)'), findsOneWidget);
+
+    // Past onset the window stops at 0 ms.
+    final across = await tester.startGesture(at(-0.1), kind: PointerDeviceKind.mouse);
+    await across.moveTo(at(0.2));
+    await across.moveTo(at(0.4));
+    await across.up();
+    await tester.pump();
+    expect(session.baseline, (-0.1, 0.0));
+
+    // Too short to be a window: ignored.
+    final click = await tester.startGesture(at(-0.12), kind: PointerDeviceKind.mouse);
+    await click.moveTo(at(-0.11));
+    await click.up();
+    await tester.pump();
+    expect(session.baseline, (-0.1, 0.0));
+
+    // The same mouse, button up, hovering at the P300.
+    await click.moveTo(at(0.35));
+    addTearDown(click.removePointer);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    if (renderPath == null) return;
+    await tester.runAsync(() async {
+      final image = await tester.renderObject<RenderRepaintBoundary>(find.byKey(key)).toImage(pixelRatio: 1.5);
+      final png = await image.toByteData(format: ui.ImageByteFormat.png);
+      File(renderPath.replaceFirst('.png', '_baseline.png')).writeAsBytesSync(png!.buffer.asUint8List());
+    });
+  });
 }
