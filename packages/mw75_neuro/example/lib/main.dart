@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_skill/flutter_skill.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
 
 /// Bench-test app for the MW75 driver.
@@ -12,7 +14,13 @@ import 'package:mw75_neuro/mw75_neuro.dart';
 /// `--dart-define=MW75_AUTOSTOP=<seconds>` stops it again, printing status lines
 /// to the console; that is how the driver is exercised against real hardware
 /// without clicking.
-void main() => runApp(const BenchApp());
+///
+/// Debug builds also take flutter-skill's bridge, so an AI agent can look at
+/// and drive the app (see .claude/skills/flutter-skill).
+void main() {
+  if (kDebugMode) FlutterSkillBinding.ensureInitialized();
+  runApp(const BenchApp());
+}
 
 const _autostart = bool.fromEnvironment('MW75_AUTOSTART');
 const _autostopSeconds = int.fromEnvironment('MW75_AUTOSTOP');

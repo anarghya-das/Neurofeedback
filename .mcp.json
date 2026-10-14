@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "flutter-skill": {
+      "command": "${HOME}/.pub-cache/bin/flutter_skill",
+      "args": ["server"]
+    }
+  }
+}
