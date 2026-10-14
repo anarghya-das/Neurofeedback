@@ -36,7 +36,15 @@ class BenchApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
     title: 'MW75 bench test',
-    theme: ThemeData(scaffoldBackgroundColor: const Color(0xFFF7F7F8), colorSchemeSeed: _ink),
+    // Light only: macOS dark mode leaves the bench as it is.
+    themeMode: ThemeMode.light,
+    theme: ThemeData(
+      scaffoldBackgroundColor: const Color(0xFFF7F7F8),
+      colorSchemeSeed: _ink,
+      // Menu items and other ink show the pointer at 8% ink; Flutter's 4%
+      // default is hard to see on a laptop screen.
+      hoverColor: _ink.withValues(alpha: 0.08),
+    ),
     home: const BenchPage(),
   );
 }

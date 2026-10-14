@@ -18,6 +18,8 @@ Versions of the MW75 Bench app (`example/`) and, in brackets, of the
   under the pointer.
 - Runs record the level, ISI, tone length and rare share they used; runs saved by
   1.1.0 still load.
+- Menu items under the pointer are easier to see. The app stays light in macOS dark
+  mode.
 
 ## MW75 Bench 1.1.0 (mw75_neuro 0.2.0)
 
