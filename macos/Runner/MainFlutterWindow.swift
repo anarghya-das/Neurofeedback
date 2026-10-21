@@ -11,6 +11,8 @@ class MainFlutterWindow: NSWindow {
     self.center()
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    // Native MW75 code (Bluetooth + tones) lives in this target now, not in a plugin package.
+    Mw75NeuroPlugin.register(with: flutterViewController.registrar(forPlugin: "Mw75NeuroPlugin"))
 
     super.awakeFromNib()
   }

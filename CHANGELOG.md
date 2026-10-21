@@ -1,7 +1,14 @@
 # Changelog
 
-Versions of the MW75 Bench app (repo root) and, in brackets, of the
-`mw75_neuro` package it ships with. Releases are tagged `mw75-bench-v<version>`.
+Versions of the MW75 Bench app and, in brackets, of the `mw75_neuro` driver it
+shipped with. The driver is now part of the app (it used to be a separate package under
+`packages/mw75_neuro`), so the bracketed number stops here. Releases are tagged
+`mw75-bench-v<version>`.
+
+## Unreleased
+
+- Repository restructure: the app is the repo root and the driver code lives in `lib/`
+  and `macos/Runner/` instead of a `packages/mw75_neuro` package.
 
 ## MW75 Bench 1.2.1 (mw75_neuro 0.3.1)
 

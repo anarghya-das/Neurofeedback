@@ -1,5 +1,5 @@
-name: mw75_neuro_example
-description: "Bench-test app for the mw75_neuro driver."
+name: mw75_neuro
+description: "MW75 Bench: bench-test and neurofeedback app for the Neurable MW75 Neuro headset."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -20,6 +20,7 @@ version: 1.2.1+4
 
 environment:
   sdk: ^3.13.0-282.3.beta
+  flutter: ">=3.44.0"
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -34,8 +35,8 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  mw75_neuro:
-    path: packages/mw75_neuro
+  ffi: ^2.1.3
+  lsl_bindings: ^0.0.5
   flutter_skill: ^0.9.37
 
 dev_dependencies:

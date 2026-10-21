@@ -31,9 +31,8 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Run driver package tests
+      - name: Run tests
         run: flutter test
-        working-directory: packages/mw75_neuro
 
       - name: Build macOS release
         run: flutter build macos --release

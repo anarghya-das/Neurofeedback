@@ -15,9 +15,10 @@ headphones and provides:
 
 | Path | What it is |
 | --- | --- |
-| `lib/` | The app (UI shell, entry point `lib/main.dart`) |
-| `packages/mw75_neuro/` | Driver and shared logic used by the app: transport/protocol, signal processing, test runs, UI panels, and the native plugin code (`macos/`) |
-| `macos/` | macOS runner for the app |
+| `lib/main.dart` | App entry point and window layout |
+| `lib/mw75_neuro.dart`, `lib/src/` | Headset driver and shared logic: transport/protocol, signal processing, test runs, LSL outlets, UI panels |
+| `macos/` | macOS runner. The native Swift code for Bluetooth and tone playback is in `macos/Runner/` (`Mw75NeuroPlugin`, `BleLink`, `ToneStimulator`) and is registered in `MainFlutterWindow.swift` |
+| `test/` | Unit and widget tests |
 | `scripts/package_macos.sh` | Builds and packages a macOS DMG into `dist/` |
 | `docs/` | Protocol notes (`neurable-mw75-protocol.md`) |
 | `tools/` | Python/Swift helpers for probing the headset and reading LSL streams |
@@ -38,7 +39,7 @@ and macOS 14+. Windows support is in progress.
 ## Test
 
 ```sh
-cd packages/mw75_neuro && flutter test   # driver and shared logic (the app has no tests of its own yet)
+flutter test
 ```
 
-See `packages/mw75_neuro/CHANGELOG.md` for version history.
+See `CHANGELOG.md` for version history.
