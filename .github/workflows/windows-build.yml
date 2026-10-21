@@ -1,0 +1,49 @@
+name: Build Windows App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+      - windows-support
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Same pinned version as the macOS workflow: the project was created with
+      # Flutter 3.47.0-0.3.pre (Dart 3.13.0-282.3.beta). Newer betas such as 3.50
+      # make 15 widget tests fail. Raise it deliberately, after running the tests.
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: beta
+          flutter-version: 3.47.0-0.3.pre
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Check Flutter doctor
+        run: flutter doctor -v
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Upload Windows release folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: MW75-Bench-Windows-Release
+          path: build/windows/x64/runner/Release/
+
+      # After the build and upload, so a failing test still leaves the app to try.
+      - name: Run tests
+        run: flutter test

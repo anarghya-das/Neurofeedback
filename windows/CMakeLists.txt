@@ -4,7 +4,7 @@ project(mw75_neuro LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "mw75_neuro")
+set(BINARY_NAME "MW75Bench")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.

@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "mw75_neuro" "\0"
+            VALUE "CompanyName", "edu.buffalo.neurofeedback" "\0"
+            VALUE "FileDescription", "MW75 Bench" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "mw75_neuro" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "mw75_neuro.exe" "\0"
-            VALUE "ProductName", "mw75_neuro" "\0"
+            VALUE "InternalName", "MW75Bench" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 edu.buffalo.neurofeedback. All rights reserved." "\0"
+            VALUE "OriginalFilename", "MW75Bench.exe" "\0"
+            VALUE "ProductName", "MW75 Bench" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

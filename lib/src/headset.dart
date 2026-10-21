@@ -160,7 +160,9 @@ class Mw75Headset extends ChangeNotifier {
         statusText = 'No MW75 among paired devices. Pick it from the list if it has another name.';
       }
     } catch (e) {
-      statusText = 'Could not list Bluetooth devices: $e';
+      statusText = e is MissingPluginException
+          ? 'Headset connection is not available on this platform yet (the native Bluetooth driver is macOS only).'
+          : 'Could not list Bluetooth devices: $e';
     }
     notifyListeners();
   }
@@ -501,7 +503,11 @@ class Mw75Headset extends ChangeNotifier {
   static String _lslFilterNote(EegFilterSettings f) =>
       f.applyToLsl ? '${f.describe()} (causal)' : 'none (the app filters only its own plots: ${f.describe()})';
 
-  static String _describe(Object e) => e is PlatformException ? e.message ?? e.code : e.toString();
+  static String _describe(Object e) => e is PlatformException
+      ? e.message ?? e.code
+      : e is MissingPluginException
+          ? 'not available on this platform yet (no native driver)'
+          : e.toString();
 
   static bool _looksLikeMw75(PairedDevice d) => d.name.toUpperCase().contains('MW75');
 

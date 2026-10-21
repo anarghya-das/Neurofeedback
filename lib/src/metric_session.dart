@@ -330,7 +330,11 @@ class Mw75MetricSession extends ChangeNotifier {
     if (kDebugMode) debugPrint('[metrics] $message');
   }
 
-  static String _describe(Object e) => e is PlatformException ? e.message ?? e.code : e.toString();
+  static String _describe(Object e) => e is PlatformException
+      ? e.message ?? e.code
+      : e is MissingPluginException
+          ? 'not available on this platform yet (no native driver)'
+          : e.toString();
 
   static String _hex(List<int> bytes) =>
       bytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join(' ');
