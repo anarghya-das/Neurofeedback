@@ -47,5 +47,8 @@ app.*.map.json
 # MW75 hardware probe binary, rebuilt by tools/mw75_probe/build.sh
 /tools/mw75_probe/mw75_probe
 
-# Packaged apps from packages/mw75_neuro/example/scripts/package_macos.sh
+# Packaged apps from scripts/package_macos.sh
 /dist/
+
+# Widget Preview related
+.widget_preview/

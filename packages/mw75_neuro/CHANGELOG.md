@@ -1,6 +1,6 @@
 # Changelog
 
-Versions of the MW75 Bench app (`example/`) and, in brackets, of the
+Versions of the MW75 Bench app (repo root) and, in brackets, of the
 `mw75_neuro` package it ships with. Releases are tagged `mw75-bench-v<version>`.
 
 ## MW75 Bench 1.2.1 (mw75_neuro 0.3.1)

@@ -1,0 +1,50 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # pubspec.yaml requires a beta Dart SDK (^3.13.0-...), so the stable
+      # channel cannot resolve dependencies.
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: beta
+          cache: true
+
+      - name: Enable macOS desktop
+        run: flutter config --enable-macos-desktop
+
+      - name: Check Flutter doctor
+        run: flutter doctor -v
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run driver package tests
+        run: flutter test
+        working-directory: packages/mw75_neuro
+
+      - name: Build macOS release
+        run: flutter build macos --release
+
+      - name: Zip macOS app
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r MW75-Bench-macOS-Release.zip "MW75 Bench.app"
+
+      - name: Upload macOS app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MW75-Bench-macOS-Release
+          path: build/macos/Build/Products/Release/MW75-Bench-macOS-Release.zip

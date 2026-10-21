@@ -1,168 +1,44 @@
-# EEG Viewer LSL
+# MW75 Bench (Neurofeedback)
 
-A consolidated README for the EEG Viewer LSL project. This document combines the main project README with architecture notes, stream-selection details, enhanced StreamInfo documentation, and a short note about launch screen assets.
+A Flutter desktop app for testing whether wearable, non-invasive EEG can drive
+reliable neurofeedback, including in audiology research (tinnitus, hearing
+loss, misophonia, hyperacusis). It currently supports the Neurable MW75 Neuro
+headphones and provides:
 
-## Table of contents
+- headset connection, start/stop streaming and signal quality
+- live EEG plot, filters and spectrum
+- focus feedback (neurofeedback) with calibration
+- auditory oddball and eyes-closed alpha test runs, with sound-level calibration
+- Lab Streaming Layer (LSL) outlets for EEG, focus and oddball markers
 
-- Project overview
-- Features
-- Getting started
-- Usage
-- Architecture (refactor summary)
-- Stream selection
-- Enhanced StreamInfo
-- Platform-specific notes & launch assets
-- Testing
-- Troubleshooting
-- License
+## Layout
 
-## Project overview
+| Path | What it is |
+| --- | --- |
+| `lib/` | The app (UI shell, entry point `lib/main.dart`) |
+| `packages/mw75_neuro/` | Driver and shared logic used by the app: transport/protocol, signal processing, test runs, UI panels, and the native plugin code (`macos/`) |
+| `macos/` | macOS runner for the app |
+| `scripts/package_macos.sh` | Builds and packages a macOS DMG into `dist/` |
+| `docs/` | Protocol notes (`neurable-mw75-protocol.md`) |
+| `tools/` | Python/Swift helpers for probing the headset and reading LSL streams |
 
-A Flutter application for discovering, connecting to, and visualizing EEG data streams using the Lab Streaming Layer (LSL) protocol.
+The previous "EEG Viewer LSL" app is no longer in this tree; it remains on the
+`main` branch history from before this restructure.
 
-Cross-platform: macOS, Windows, iOS, Android (and Linux/web where supported).
+## Run
 
-## Features
-
-- LSL stream discovery and resolution
-- Stream selection UI (choose which discovered stream to connect)
-- Inlet worker runs in an isolate for non-blocking data reception
-- Real-time sample display and time-series graphing
-- Modular code structure for maintainability and testing
-
-## Getting started
-
-### Prerequisites
-
-- Flutter SDK (recommended 3.10.0 or higher)
-- An LSL outlet/source (device, simulator, or generator)
-
-### Installation
-
-1. Clone the repository:
-    ```bash
-    git clone <repository-url>
-    cd eeg_viewer_lsl
-    ```
-
-2. Install dependencies:
-    ```bash
-    flutter pub get
-    ```
-
-3. Run the application on your platform of choice:
-    ```bash
-    flutter run -d macos
-    flutter run -d windows
-    flutter run -d android
-    flutter run -d ios
-    ```
-
-## Usage
-
-1. Open the app and navigate to the Data tab
-2. Discover available LSL streams (the app can also auto-discover on startup)
-3. Use the Stream Selection UI to pick a stream if you prefer a specific outlet
-4. Connect and start streaming to view samples and live graphs
-
-## Architecture (refactor summary)
-
-The app has been refactored into a modular structure for clarity and testability.
-
-Key folders under `lib/`:
-
-- `models/` — data models like `stream_info.dart` and `eeg_data_manager.dart`
-- `services/` — LSL integration (`lsl_service.dart`) and related logic
-- `screens/` — UI pages (`eeg_viewer_screen.dart`, `data_view_screen.dart`, `graph_view_screen.dart`)
-- `widgets/` — reusable widgets (`eeg_chart.dart`, `stream_selector.dart`, `chart_controls.dart`, `status_display.dart`)
-- `utils/` — utilities such as `chart_utils.dart`
-
-Benefits: separation of concerns, easier testing, improved reusability, and scalability.
-
-## Stream selection
-
-The app supports interactive stream selection rather than auto-connecting to the first discovered stream. Main points:
-
-- Stream discovery populates a list of `ResolvedStreamHandle` objects
-- A `RadioListTile`-based selector shows stream name, channel count and basic metadata
-- The selected stream index is tracked (e.g. `_selectedStreamIndex`) and user-initiated connect uses the selected stream
-- UI includes validation and clear error/status messages
-
-Example UI snippet:
-
-```dart
-ListView.builder(
-   itemCount: streams.length,
-   itemBuilder: (context, index) {
-      return RadioListTile<int>(
-         title: Text('${streams[index].name}'),
-         subtitle: Text('Channels: ${streams[index].channelCount}'),
-         value: index,
-         groupValue: _selectedStreamIndex,
-         onChanged: (value) => setState(() => _selectedStreamIndex = value!),
-      );
-   },
-);
+```sh
+flutter pub get
+flutter run -d macos
 ```
 
-## Enhanced StreamInfo
+Requires a Flutter beta that satisfies the SDK constraint in `pubspec.yaml`,
+and macOS 14+. Windows support is in progress.
 
-The `StreamInfo` model has been improved to read real metadata from `ResolvedStreamHandle.info` instead of placeholders. Available LSL properties typically include:
+## Test
 
-- `name`, `channelCount`, `nominalSRate`, `type`, `sourceId`, `hostname`, `uid`, `sessionId`, `createdAt`
-
-Factory example:
-
-```dart
-factory StreamInfo.fromHandle(ResolvedStreamHandle handle, {int index = 0}) {
-   final lslInfo = handle.info;
-   return StreamInfo(
-      handle: handle,
-      name: lslInfo.name.isNotEmpty ? lslInfo.name : 'LSL Stream ${index + 1}',
-      channelCount: lslInfo.channelCount,
-      nominalSampleRate: lslInfo.nominalSRate,
-      type: lslInfo.type.isNotEmpty ? lslInfo.type : 'Unknown',
-   );
-}
+```sh
+cd packages/mw75_neuro && flutter test   # driver and shared logic (the app has no tests of its own yet)
 ```
 
-Benefits: accurate sampling rates, correct buffer sizing, meaningful UI labels, and safer processing.
-
-## Platform-specific notes & launch assets
-
-macOS
-- Network permissions generally handled automatically; production apps may need multicast entitlements.
-
-iOS
-- Add `NSLocalNetworkUsageDescription` to `Info.plist` and ensure multicast entitlement if distributing via the App Store.
-
-Android
-- Minimum SDK 26; internet and network state permissions required. Multicast lock used for discovery.
-
-Launch screen assets
-
-You can customize the iOS launch screen images in `ios/Runner/Assets.xcassets` by replacing the images in the `LaunchImage.imageset` directory. Open Xcode with `open ios/Runner.xcworkspace` and update assets visually if preferred.
-
-## Testing
-
-To test without hardware, run an LSL generator/outlet. Example Python generator:
-
-```python
-from pylsl import StreamInfo, StreamOutlet
-import time, random
-
-info = StreamInfo('TestEEG', 'EEG', 8, 250, 'float32', 'myuid34234')
-outlet = StreamOutlet(info)
-
-while True:
-      sample = [random.random() for _ in range(8)]
-      outlet.push_sample(sample)
-      time.sleep(1.0/250)
-```
-
-## Troubleshooting
-
-- No streams found: ensure generators are on the same network and broadcasting
-- Connection failed: check firewall and platform network permissions
-- Build errors (macOS/iOS): verify entitlements and signing
-- Performance: isolate workers are used but very high-rate streams may still affect performance
+See `packages/mw75_neuro/CHANGELOG.md` for version history.

@@ -5,10 +5,12 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = eeg_viewer_lsl
+// The bundled liblsl (lsl_bindings) is built for macOS 14+, hence the
+// deployment target of 14.0 in the Xcode project and Podfile.
+PRODUCT_NAME = MW75 Bench
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.example.eegViewerLsl
+PRODUCT_BUNDLE_IDENTIFIER = edu.buffalo.neurofeedback.mw75NeuroExample
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2025 com.example. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 edu.buffalo.neurofeedback. All rights reserved.

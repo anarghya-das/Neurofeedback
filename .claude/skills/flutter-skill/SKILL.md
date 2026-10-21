@@ -1,6 +1,6 @@
 ---
 name: flutter-skill
-description: "Launch, look at and drive the MW75 Bench app (packages/mw75_neuro/example) through the flutter-skill MCP server: screenshots, tapping, typing, scrolling, reading the UI tree and logs. Use when asked to run, test, check or demo the app's UI, or to confirm a change works in the real app rather than only in widget tests."
+description: "Launch, look at and drive the MW75 Bench app (repo root) through the flutter-skill MCP server: screenshots, tapping, typing, scrolling, reading the UI tree and logs. Use when asked to run, test, check or demo the app's UI, or to confirm a change works in the real app rather than only in widget tests."
 ---
 
 # Driving MW75 Bench with flutter-skill
@@ -12,7 +12,7 @@ so release builds and the DMG do not include it.
 
 ## Setup (already done in this repo)
 
-- App dependency: `flutter_skill` in `packages/mw75_neuro/example/pubspec.yaml`.
+- App dependency: `flutter_skill` in `pubspec.yaml`.
 - MCP server: `.mcp.json` at the repo root runs `${HOME}/.pub-cache/bin/flutter_skill server`.
 - On a new machine, install the server once with
   `dart pub global activate flutter_skill` (not npm). CocoaPods is needed to build
@@ -28,7 +28,7 @@ which Claude Code does not read, and the app is already set up.
 Prefer the MCP tool:
 
 ```
-launch_app(project_path: "<repo>/packages/mw75_neuro/example", device_id: "macos",
+launch_app(project_path: "<repo>", device_id: "macos",
            extra_args: ["--vm-service-port=50000"])
 ```
 
