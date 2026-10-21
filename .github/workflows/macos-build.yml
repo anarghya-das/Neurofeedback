@@ -15,11 +15,15 @@ jobs:
         uses: actions/checkout@v4
 
       # pubspec.yaml requires a beta Dart SDK (^3.13.0-...), so the stable
-      # channel cannot resolve dependencies.
+      # channel cannot resolve dependencies. The version is pinned to the one the
+      # project was created with (Dart 3.13.0-282.3.beta): newer betas such as 3.50
+      # make 15 widget tests fail with "An animation is still running even after
+      # the widget tree was disposed". Raise it deliberately, after running the tests.
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: beta
+          flutter-version: 3.47.0-0.3.pre
           cache: true
 
       - name: Enable macOS desktop
