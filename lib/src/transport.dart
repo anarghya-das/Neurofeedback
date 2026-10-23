@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
-/// A Bluetooth device paired with this Mac.
+import 'windows_rfcomm.dart';
+
+/// A Bluetooth device paired with this computer.
 class PairedDevice {
   const PairedDevice({
     required this.name,
@@ -96,12 +99,17 @@ class Mw75Transport {
 
   Mw75Transport._()
       : _methods = const MethodChannel('mw75_neuro'),
-        _events = const EventChannel('mw75_neuro/events');
+        _events = const EventChannel('mw75_neuro/events'),
+        _windows = Platform.isWindows ? WindowsRfcomm() : null;
 
   static final _instance = Mw75Transport._();
 
   final MethodChannel _methods;
   final EventChannel _events;
+
+  /// On Windows the RFCOMM channels are opened from Dart (Winsock) instead of
+  /// through the native plugin macOS uses. BLE is macOS only.
+  final WindowsRfcomm? _windows;
 
   late final Stream<Object> _eventStream = _events
       .receiveBroadcastStream()
@@ -110,10 +118,10 @@ class Mw75Transport {
       .cast<Object>();
 
   /// Received bytes. Subscribe before calling [open] so nothing is dropped.
-  Stream<RfcommChunk> get chunks => _eventStream.where((e) => e is RfcommChunk).cast();
+  Stream<RfcommChunk> get chunks => _windows?.chunks ?? _eventStream.where((e) => e is RfcommChunk).cast();
 
   /// Emits the role of a channel when the headset or macOS closes it.
-  Stream<RfcommRole> get closed => _eventStream.where((e) => e is RfcommRole).cast();
+  Stream<RfcommRole> get closed => _windows?.closed ?? _eventStream.where((e) => e is RfcommRole).cast();
 
   /// Notifications from subscribed BLE characteristics.
   Stream<BleNotification> get bleNotifications => _eventStream.where((e) => e is BleNotification).cast();
@@ -125,6 +133,8 @@ class Mw75Transport {
   Stream<String> get bleLogs => _eventStream.where((e) => e is _BleLog).map((e) => (e as _BleLog).message);
 
   Future<List<PairedDevice>> pairedDevices() async {
+    final windows = _windows;
+    if (windows != null) return windows.pairedDevices();
     final raw = await _methods.invokeListMethod<Map<Object?, Object?>>('pairedDevices') ?? [];
     return raw
         .map(
@@ -144,6 +154,14 @@ class Mw75Transport {
     required int dataChannel,
     required int commandServiceUuid16,
   }) async {
+    final windows = _windows;
+    if (windows != null) {
+      return windows.open(
+        address: address,
+        dataChannel: dataChannel,
+        commandServiceUuid16: commandServiceUuid16,
+      );
+    }
     final result = await _methods.invokeMapMethod<String, Object?>('open', {
       'address': address,
       'dataChannel': dataChannel,
@@ -156,16 +174,20 @@ class Mw75Transport {
   }
 
   Future<void> write(RfcommRole role, List<int> bytes) async {
+    final windows = _windows;
+    if (windows != null) return windows.write(role, bytes);
     await _methods.invokeMethod<bool>('write', {
       'channel': role.name,
       'bytes': Uint8List.fromList(bytes),
     });
   }
 
-  Future<void> close() => _methods.invokeMethod<void>('close');
+  Future<void> close() => _windows?.close() ?? _methods.invokeMethod<void>('close');
 
   /// The native clock used for [RfcommChunk.segmentTimes], for diagnostics.
-  Future<double> hostClock() async => await _methods.invokeMethod<double>('clock') ?? 0;
+  Future<double> hostClock() async => _windows != null
+      ? await _windows.hostClock()
+      : await _methods.invokeMethod<double>('clock') ?? 0;
 
   /// Finds a peripheral whose name contains [nameContains] (one already connected
   /// to this Mac first, otherwise by scanning), connects, and subscribes to
