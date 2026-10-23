@@ -21,9 +21,7 @@ import 'transport.dart';
 const _afBth = 32;
 const _sockStream = 1;
 const _bthprotoRfcomm = 3;
-const _solSocket = 0xffff;
-const _soRcvTimeo = 0x1006;
-const _wsaTimedOut = 10060;
+const _sdBoth = 2;
 
 final DynamicLibrary _ws2 = DynamicLibrary.open('ws2_32.dll');
 
@@ -46,11 +44,8 @@ final int Function(int, Pointer<Uint8>, int, int) _wsRecv = _ws2
       Int32 Function(IntPtr, Pointer<Uint8>, Int32, Int32),
       int Function(int, Pointer<Uint8>, int, int)
     >('recv');
-final int Function(int, int, int, Pointer<Int32>, int) _wsSetsockopt = _ws2
-    .lookupFunction<
-      Int32 Function(IntPtr, Int32, Int32, Pointer<Int32>, Int32),
-      int Function(int, int, int, Pointer<Int32>, int)
-    >('setsockopt');
+final int Function(int, int) _wsShutdown = _ws2
+    .lookupFunction<Int32 Function(IntPtr, Int32), int Function(int, int)>('shutdown');
 final int Function(int) _wsClose = _ws2.lookupFunction<Int32 Function(IntPtr), int Function(int)>('closesocket');
 
 final DynamicLibrary _kernel32 = DynamicLibrary.open('kernel32.dll');
@@ -148,41 +143,37 @@ int _connectBlocking(int address, int service16, int port) {
   } finally {
     calloc.free(name);
   }
-  final timeout = calloc<Int32>();
-  try {
-    timeout.value = 200; // ms, so a receive loop can notice a closed socket
-    _wsSetsockopt(socket, _solSocket, _soRcvTimeo, timeout, 4);
-  } finally {
-    calloc.free(timeout);
-  }
   return socket;
 }
 
 int _nonZero(int error) => error == 0 ? 1 : error;
 
 /// Isolate entry point: `[socket, role (0 command, 1 data), SendPort]`. Sends
-/// `[role, bytes, time]` for each read and `[role, null, 0.0]` when the link ends.
+/// `[role, bytes, time]` for each read and `[role, null, 0.0, reason]` when the
+/// link ends. The read blocks until data arrives or the main isolate closes the
+/// socket; a receive timeout is avoided because Winsock leaves a socket in an
+/// undefined state after one.
 void _receiveLoop(List<Object> args) {
   final socket = args[0] as int;
   final role = args[1] as int;
   final port = args[2] as SendPort;
   const size = 16384;
   final buffer = calloc<Uint8>(size);
+  var reason = 'closed by the headset';
   try {
     while (true) {
       final n = _wsRecv(socket, buffer, size, 0);
       if (n > 0) {
         port.send(<Object>[role, Uint8List.fromList(buffer.asTypedList(n)), _counterSeconds()]);
-      } else if (n == 0) {
-        break;
-      } else if (_wsaGetLastError() != _wsaTimedOut) {
+      } else {
+        if (n < 0) reason = 'Windows Bluetooth error ${_wsaGetLastError()}';
         break;
       }
     }
   } finally {
     calloc.free(buffer);
   }
-  port.send(<Object?>[role, null, 0.0]);
+  port.send(<Object?>[role, null, 0.0, reason]);
 }
 
 /// RFCOMM over Winsock, with the same surface as the macOS plugin's channel.
@@ -193,6 +184,9 @@ class WindowsRfcomm {
   int _command = -1;
   int _data = -1;
   bool _closing = false;
+
+  /// Why the last channel closed on its own, for the log and error text.
+  String? closeReason;
   ReceivePort? _port;
   final _isolates = <Isolate>[];
 
@@ -224,6 +218,7 @@ class WindowsRfcomm {
   }) async {
     await close();
     _closing = false;
+    closeReason = null;
     final target = parseBluetoothAddress(address);
 
     final command = await Isolate.run(() => _connectBlocking(target, commandServiceUuid16, 0));
@@ -247,7 +242,8 @@ class WindowsRfcomm {
   Future<void> write(RfcommRole role, List<int> bytes) async {
     final socket = role == RfcommRole.data ? _data : _command;
     if (socket < 0) {
-      throw PlatformException(code: 'not_open', message: 'The headset connection is not open.');
+      final why = closeReason == null ? '' : ' ($closeReason)';
+      throw PlatformException(code: 'not_open', message: 'The headset connection is not open$why.');
     }
     final buffer = calloc<Uint8>(bytes.length);
     try {
@@ -270,8 +266,15 @@ class WindowsRfcomm {
     final data = _data;
     _command = -1;
     _data = -1;
-    if (command >= 0) _wsClose(command);
-    if (data >= 0) _wsClose(data);
+    // shutdown first so a read blocked in another isolate returns at once.
+    if (command >= 0) {
+      _wsShutdown(command, _sdBoth);
+      _wsClose(command);
+    }
+    if (data >= 0) {
+      _wsShutdown(data, _sdBoth);
+      _wsClose(data);
+    }
     for (final isolate in _isolates) {
       isolate.kill(priority: Isolate.immediate);
     }
@@ -287,7 +290,10 @@ class WindowsRfcomm {
     final role = message[0] == 1 ? RfcommRole.data : RfcommRole.command;
     final bytes = message[1];
     if (bytes is! Uint8List) {
-      if (!_closing) _closed.add(role);
+      if (!_closing) {
+        closeReason = message.length > 3 ? message[3] as String? : null;
+        _closed.add(role);
+      }
       return;
     }
     _chunks.add(

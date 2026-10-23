@@ -123,6 +123,9 @@ class Mw75Transport {
   /// Emits the role of a channel when the headset or macOS closes it.
   Stream<RfcommRole> get closed => _windows?.closed ?? _eventStream.where((e) => e is RfcommRole).cast();
 
+  /// Why a channel last closed on its own, when the platform says (Windows).
+  String? get closeReason => _windows?.closeReason;
+
   /// Notifications from subscribed BLE characteristics.
   Stream<BleNotification> get bleNotifications => _eventStream.where((e) => e is BleNotification).cast();
 

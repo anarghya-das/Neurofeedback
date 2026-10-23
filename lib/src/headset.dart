@@ -422,10 +422,14 @@ class Mw75Headset extends ChangeNotifier {
   }
 
   void _onChannelClosed(RfcommRole role) {
-    _log('${role.name} channel closed by the headset');
+    final why = _transport.closeReason;
+    _log('${role.name} channel closed by the headset${why == null ? '' : ' ($why)'}');
     if (_state == HeadsetState.streaming || _state == HeadsetState.starting) {
       unawaited(_teardown(sendDisable: false));
-      _setState(HeadsetState.error, 'The headset disconnected. Check that it is on and in range, then start again.');
+      _setState(
+        HeadsetState.error,
+        'The headset disconnected${why == null ? '' : ' ($why)'}. Check that it is on and in range, then start again.',
+      );
     }
   }
 
