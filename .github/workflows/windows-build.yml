@@ -38,6 +38,23 @@ jobs:
       - name: Build Windows release
         run: flutter build windows --release
 
+      # The C++ parts of the app (liblsl) are built with the runner's current MSVC.
+      # On a PC with an older Visual C++ runtime (the lab laptop has MSVCP140.dll
+      # 14.27) they crash with an access violation inside MSVCP140.dll, a known
+      # mismatch since Visual Studio 17.10. Ship the runner's runtime next to the
+      # exe: Windows loads the copy in the app folder before the system one.
+      - name: Bundle the Visual C++ runtime
+        shell: pwsh
+        run: |
+          $dest = "build/windows/x64/runner/Release"
+          foreach ($dll in 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            $src = Join-Path $env:WINDIR "System32\$dll"
+            if (Test-Path $src) {
+              Copy-Item $src $dest
+              Write-Host "Bundled $dll $((Get-Item $src).VersionInfo.FileVersion)"
+            }
+          }
+
       - name: Upload Windows release folder
         uses: actions/upload-artifact@v4
         with:
