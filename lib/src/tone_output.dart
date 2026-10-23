@@ -1,4 +1,8 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/services.dart';
+
+import 'windows_speech.dart';
 
 /// An audio output on this Mac.
 class AudioOutputDevice {
@@ -97,5 +101,7 @@ class ToneOutput {
 
   /// Speaks [text] on the system output, interrupting anything still being
   /// said; null just stops speaking.
-  Future<void> speak(String? text) => _methods.invokeMethod<void>('speak', {'text': text});
+  Future<void> speak(String? text) => Platform.isWindows
+      ? WindowsSpeech.instance.speak(text)
+      : _methods.invokeMethod<void>('speak', {'text': text});
 }

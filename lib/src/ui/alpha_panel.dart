@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../alpha_test.dart';
 import '../band_power.dart';
 import '../lsl_eeg_outlet.dart';
+import 'alpha_fixation.dart';
 import 'saved_runs.dart';
 
 const _ink = Color(0xFF111216);
@@ -83,7 +84,16 @@ class AlphaControls extends StatelessWidget {
               height: 34,
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: busy ? session.stop : (blocked ? null : session.start),
+                onPressed: busy
+                    ? session.stop
+                    : (blocked
+                          ? null
+                          : () {
+                              session.start();
+                              // start() turns busy at once when it can run; then
+                              // the participant gets the fixation screen.
+                              if (session.busy) Navigator.of(context).push(AlphaFixationScreen.route(session));
+                            }),
                 icon: Icon(busy ? Icons.stop_rounded : Icons.play_arrow_rounded, size: 15),
                 label: Text(
                   busy ? 'Stop test' : 'Start test',
