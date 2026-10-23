@@ -10,6 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
 
+import 'support/system_fonts.dart';
+
 /// 1/f background, a 10 Hz alpha peak of a different size per channel, and
 /// the dip a 60 Hz notch leaves.
 PowerSpectrum _spectrum(int channel) {
@@ -29,7 +31,7 @@ void main() {
     final loader = FontLoader('Roboto');
     for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
       loader.addFont(
-        Future.value(ByteData.sublistView(File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync())),
+        Future.value(ByteData.sublistView(File(systemFontPath(file)).readAsBytesSync())),
       );
     }
     await loader.load();

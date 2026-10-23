@@ -10,6 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
 
+import 'support/system_fonts.dart';
+
 class _SilentTones implements ToneOutput {
   @override
   Future<List<AudioOutputDevice>> devices() async => const [];
@@ -64,7 +66,7 @@ void main() {
     testWidgets('lays out the oddball view without overflow ($name)', (tester) async {
       final loader = FontLoader('Roboto');
       for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
-        final bytes = File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync();
+        final bytes = File(systemFontPath(file)).readAsBytesSync();
         loader.addFont(Future.value(ByteData.sublistView(bytes)));
       }
       await loader.load();
@@ -202,7 +204,7 @@ void main() {
   testWidgets('dragging across the plot before onset sets the baseline; hovering reads it out', (tester) async {
     final loader = FontLoader('Roboto');
     for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
-      final bytes = File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync();
+      final bytes = File(systemFontPath(file)).readAsBytesSync();
       loader.addFont(Future.value(ByteData.sublistView(bytes)));
     }
     await loader.load();
@@ -279,7 +281,7 @@ void main() {
   testWidgets('the trials table keeps its row labels when the panel is narrow', (tester) async {
     final loader = FontLoader('Roboto');
     for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
-      final bytes = File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync();
+      final bytes = File(systemFontPath(file)).readAsBytesSync();
       loader.addFont(Future.value(ByteData.sublistView(bytes)));
     }
     await loader.load();

@@ -9,6 +9,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
 
+import 'support/system_fonts.dart';
+
 /// 31 s of 12 channels: 10 Hz rhythm, noise and offsets, a blink-like spike on Ch3.
 EegPlotBuffer _buffer(double t0) {
   final buffer = EegPlotBuffer(seconds: EegTracePainter.maxWindow);
@@ -45,7 +47,7 @@ void main() {
       final loader = FontLoader('Roboto');
       for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
         loader.addFont(
-          Future.value(ByteData.sublistView(File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync())),
+          Future.value(ByteData.sublistView(File(systemFontPath(file)).readAsBytesSync())),
         );
       }
       await loader.load();

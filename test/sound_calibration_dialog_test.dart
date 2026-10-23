@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
 
+import 'support/system_fonts.dart';
+
 /// Holds steady tones and reports a fixed Mac volume.
 class _MeterTones implements ToneOutput {
   final held = <(double, double)>[];
@@ -47,7 +49,7 @@ void main() {
   testWidgets('walks through calibrating an output and then sets levels in dB SPL', (tester) async {
     final loader = FontLoader('Roboto');
     for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
-      final bytes = File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync();
+      final bytes = File(systemFontPath(file)).readAsBytesSync();
       loader.addFont(Future.value(ByteData.sublistView(bytes)));
     }
     await loader.load();

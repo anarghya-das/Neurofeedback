@@ -11,6 +11,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
 
+import 'support/system_fonts.dart';
+
 const _rate = 496.5;
 
 /// [seconds] of 12-channel EEG: white noise plus a 10 Hz rhythm of
@@ -225,7 +227,7 @@ void main() {
   testWidgets('lays out the alpha view without overflow', (tester) async {
     final loader = FontLoader('Roboto');
     for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
-      final bytes = File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync();
+      final bytes = File(systemFontPath(file)).readAsBytesSync();
       loader.addFont(Future.value(ByteData.sublistView(bytes)));
     }
     await loader.load();
