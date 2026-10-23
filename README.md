@@ -20,8 +20,8 @@ headphones and provides:
 | `macos/` | macOS runner. The native Swift code for Bluetooth and tone playback is in `macos/Runner/` (`Mw75NeuroPlugin`, `BleLink`, `ToneStimulator`) and is registered in `MainFlutterWindow.swift` |
 | `test/` | Unit and widget tests |
 | `scripts/package_macos.sh` | Builds and packages a macOS DMG into `dist/` |
-| `docs/` | Protocol notes (`neurable-mw75-protocol.md`) |
-| `tools/` | Python/Swift helpers for probing the headset and reading LSL streams |
+| `docs/` | Protocol notes (`neurable-mw75-protocol.md`, `emotiv-epoc-plus.md`) and the plan for supporting more headsets (`multi-device-plan.md`) |
+| `tools/` | Python/Swift helpers for probing headsets (`mw75_probe/`, `emotiv_probe/`) and reading LSL streams |
 
 The previous "EEG Viewer LSL" app is no longer in this tree; it remains on the
 `main` branch history from before this restructure.

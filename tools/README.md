@@ -35,3 +35,13 @@ Notes
 
 - The script requires an LSL publisher to be running and visible on the network/local host.
 - If `pylsl` is not installed, install it with `pip install pylsl`.
+
+Emotiv EPOC+ dongle check
+
+`emotiv_probe/check.py` listens to the EPOC+ USB dongle for a few seconds and reports whether the
+headset's packets decrypt, the sample rate, dropped samples and per-channel µV. It never writes to
+the device. Dependencies are declared in the script, so uv installs them:
+
+   uv run tools/emotiv_probe/check.py
+
+See docs/emotiv-epoc-plus.md for setup and what the output means.
