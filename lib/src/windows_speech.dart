@@ -5,9 +5,11 @@ import 'dart:io';
 /// Spoken cues on Windows, through the built-in System.Speech synthesizer.
 ///
 /// One PowerShell process stays open and speaks each line written to it, so only
-/// the first cue waits for it to start (about a second). A new line interrupts
-/// whatever is still being said; an empty line just stops speaking, like
-/// `speak(null)` on macOS.
+/// the first cue waits for it to start (about a second). Lines are spoken one
+/// after another with the blocking `Speak`: the first Windows test used
+/// `SpeakAsyncCancelAll` + `SpeakAsync` and only the first cue was heard. The
+/// cues are short and 20 s apart, so nothing queues up in practice. An empty
+/// line (`speak(null)`) is ignored.
 class WindowsSpeech {
   WindowsSpeech._();
 
@@ -18,8 +20,7 @@ class WindowsSpeech {
       r'$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
       r'$s.SetOutputToDefaultAudioDevice(); '
       r'while (($line = [Console]::In.ReadLine()) -ne $null) { '
-      r'$s.SpeakAsyncCancelAll(); '
-      r'if ($line.Length -gt 0) { [void]$s.SpeakAsync($line) } '
+      r'if ($line.Length -gt 0) { try { $s.Speak($line) } catch { } } '
       r'}';
 
   Future<Process>? _process;
