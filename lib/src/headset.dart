@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -196,7 +197,9 @@ class Mw75Headset extends ChangeNotifier {
       );
       _log('Opened command channel ${channels.commandChannel} and data channel ${channels.dataChannel}');
       await Future<void>.delayed(const Duration(milliseconds: 500));
+      _log('Calibrating the clock against LSL…');
       await _calibrateClock();
+      _log('Clock calibrated (offset ${_clockOffset.toStringAsFixed(3)} s)');
 
       // A previous session that ended without disable_raw_mode (a crash, a force
       // quit) leaves the headset streaming. Research Kit then skips the start
@@ -242,7 +245,11 @@ class Mw75Headset extends ChangeNotifier {
         await _syncClock();
       }
 
-      if (publishToLsl) _openOutlet(device);
+      if (publishToLsl) {
+        _log('Creating the LSL outlet…');
+        _openOutlet(device);
+        _log('LSL outlet ready');
+      }
 
       if (!alreadyStreaming) {
         _setStatus('Starting raw EEG…');
@@ -502,6 +509,20 @@ class Mw75Headset extends ChangeNotifier {
       log.removeFirst();
     }
     if (kDebugMode) debugPrint('[mw75] $message');
+    if (Platform.isWindows) _appendToLogFile(message);
+  }
+
+  /// On Windows the log is also appended to `%TEMP%\MW75Bench-log.txt` and
+  /// flushed line by line, so the last step before a crash can be read afterwards.
+  static void _appendToLogFile(String message) {
+    try {
+      final dir = Platform.environment['TEMP'] ?? Directory.systemTemp.path;
+      File('$dir\\MW75Bench-log.txt').writeAsStringSync(
+        '${DateTime.now().toIso8601String()}  $message\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } catch (_) {}
   }
 
   static String _lslFilterNote(EegFilterSettings f) =>
