@@ -82,6 +82,9 @@ class _TestScreenState extends State<TestScreen> {
   void _close() {
     if (_closing || !mounted) return;
     _closing = true;
+    // Leave full screen first, while this screen is still up; dispose repeats it
+    // in case the screen was closed some other way (a no-op otherwise).
+    AppWindow.setFullScreen(false);
     Navigator.of(context).maybePop();
   }
 

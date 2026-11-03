@@ -28,8 +28,7 @@ class MainFlutterWindow: NSWindow {
       switch call.method {
       case "setFullScreen":
         let wanted = ((call.arguments as? [String: Any])?["value"] as? Bool) ?? false
-        window.requestFullScreen(wanted)
-        result(nil)
+        result(window.requestFullScreen(wanted))
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -52,31 +51,39 @@ class MainFlutterWindow: NSWindow {
   /// under way. Esc in a full-screen window makes AppKit start leaving full screen
   /// by itself; toggling then (because the style mask still says full screen)
   /// would send the window straight back in.
-  func requestFullScreen(_ wanted: Bool) {
+  /// Returns what it did, for the log on the Dart side.
+  @discardableResult
+  func requestFullScreen(_ wanted: Bool) -> String {
+    let isFull = styleMask.contains(.fullScreen)
     if fullScreenTransition {
       pendingFullScreen = wanted
-      return
+      return "wanted \(wanted), in transition (full: \(isFull)): queued"
     }
     pendingFullScreen = nil
-    if styleMask.contains(.fullScreen) != wanted {
+    if isFull != wanted {
       toggleFullScreen(nil)
+      return "wanted \(wanted), full: \(isFull): toggled"
     }
+    return "wanted \(wanted), full: \(isFull): nothing to do"
   }
 
   private func observeFullScreenTransitions() {
     let center = NotificationCenter.default
     for name in [NSWindow.willEnterFullScreenNotification, NSWindow.willExitFullScreenNotification] {
-      center.addObserver(forName: name, object: self, queue: .main) { [weak self] _ in
+      center.addObserver(forName: name, object: self, queue: .main) { [weak self] note in
         self?.fullScreenTransition = true
+        self?.windowChannel?.invokeMethod("log", arguments: note.name.rawValue)
       }
     }
     for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
-      center.addObserver(forName: name, object: self, queue: .main) { [weak self] _ in
+      center.addObserver(forName: name, object: self, queue: .main) { [weak self] note in
         guard let window = self else { return }
         window.fullScreenTransition = false
+        var line = note.name.rawValue
         if let wanted = window.pendingFullScreen {
-          window.requestFullScreen(wanted)
+          line += " -> queued request: " + window.requestFullScreen(wanted)
         }
+        window.windowChannel?.invokeMethod("log", arguments: line)
       }
     }
   }
