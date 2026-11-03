@@ -659,6 +659,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                 builder: (context, _) => FocusControls(
                   session: focus,
                   startBlockedReason: _testBlockedReason(except: focus),
+                  visual: _focusVisual,
                 ),
               ),
             ),
@@ -673,12 +674,24 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
               flex: 3,
               child: _Card(
                 title: 'Focus now',
-                trailing: _Picker<FocusVisual>(
-                  value: _focusVisual,
-                  options: FocusVisual.values,
-                  label: (v) => v.label,
-                  tooltip: 'How the score is pictured',
-                  onChanged: (v) => setState(() => _focusVisual = v),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: 'Full screen for the participant',
+                      icon: const Icon(Icons.fullscreen_rounded, size: 18),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => Navigator.of(context).push(focusFullScreenRoute(focus, _focusVisual)),
+                    ),
+                    const SizedBox(width: 4),
+                    _Picker<FocusVisual>(
+                      value: _focusVisual,
+                      options: FocusVisual.values,
+                      label: (v) => v.label,
+                      tooltip: 'How the score is pictured',
+                      onChanged: (v) => setState(() => _focusVisual = v),
+                    ),
+                  ],
                 ),
                 child: Expanded(
                   child: FocusScoreView(session: focus, visual: _focusVisual),

@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import '../alpha_test.dart';
 import '../band_power.dart';
 import '../lsl_eeg_outlet.dart';
-import 'alpha_fixation.dart';
 import 'saved_runs.dart';
+import 'test_screen.dart';
 
 const _ink = Color(0xFF111216);
 const _muted = Color(0xFF69707D);
@@ -17,6 +17,23 @@ const _tabular = [FontFeature.tabularFigures()];
 const alphaOpenColor = Color(0xFF5D80BD);
 const alphaClosedColor = Color(0xFF7A5AC8);
 const _alphaBand = Color(0x264F9A84);
+
+/// The participant's full-screen view of an alpha run: grey, a fixation dot,
+/// and the current instruction in large type (the cues are also spoken).
+Route<void> alphaTestScreenRoute(AlphaSession session) => TestScreen.route(
+  TestScreen(
+    listenable: session,
+    isRunning: () => session.busy,
+    onStop: session.stop,
+    instruction: () => switch (session.state) {
+      AlphaState.preparing => 'Look at the dot and follow the spoken instructions.',
+      AlphaState.running =>
+        session.eyesClosedNow == true ? 'Close your eyes' : 'Keep your eyes open and look at the dot',
+      AlphaState.finishing => 'Done. You can open your eyes.',
+      AlphaState.idle => null,
+    },
+  ),
+);
 
 /// Settings, start/stop, the current instruction and saved runs.
 class AlphaControls extends StatelessWidget {
@@ -92,7 +109,7 @@ class AlphaControls extends StatelessWidget {
                               session.start();
                               // start() turns busy at once when it can run; then
                               // the participant gets the fixation screen.
-                              if (session.busy) Navigator.of(context).push(AlphaFixationScreen.route(session));
+                              if (session.busy) Navigator.of(context).push(alphaTestScreenRoute(session));
                             }),
                 icon: Icon(busy ? Icons.stop_rounded : Icons.play_arrow_rounded, size: 15),
                 label: Text(
