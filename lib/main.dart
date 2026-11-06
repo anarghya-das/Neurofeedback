@@ -64,7 +64,9 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   late final focus = FocusSession(headset: headset, store: _store);
 
   /// Finished test runs: one folder each, with results and the raw EEG.
-  static final _store = TestRunStore(Directory('${Platform.environment['HOME']}/Documents/MW75 Tests'));
+  // HOME is not set on Windows; USERPROFILE is the same folder there.
+  static final _home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '.';
+  static final _store = TestRunStore(Directory('$_home/Documents/MW75 Tests'));
   final plot = EegPlotBuffer(seconds: EegTracePainter.maxWindow);
 
   /// Live EEG view: per-channel scale (± µV; 0 = automatic) and time window.
@@ -353,6 +355,8 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                         onSelectionChanged: (v) => setState(() => _view = v.first),
                       ),
                       const Spacer(),
+                      ParticipantField(store: _store),
+                      const SizedBox(width: 10),
                       // With the panel hidden, still show whether EEG is streaming.
                       if (!_panelOpen) HeadsetStatusBadge(headset: headset),
                     ],

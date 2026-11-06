@@ -2,15 +2,79 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../test_runs.dart';
+
 const _ink = Color(0xFF111216);
 const _muted = Color(0xFF69707D);
 const _line = Color(0xFFD9DCE3);
 
+/// Who the next test runs are recorded for. Every test reads it when a run
+/// starts, saves it in the run and its folder name, and shows it in the run
+/// list; a run keeps the label it started with.
+class ParticipantField extends StatefulWidget {
+  const ParticipantField({super.key, required this.store, this.width = 190});
+
+  final TestRunStore store;
+  final double width;
+
+  @override
+  State<ParticipantField> createState() => _ParticipantFieldState();
+}
+
+class _ParticipantFieldState extends State<ParticipantField> {
+  late final _controller = TextEditingController(text: widget.store.participant.value);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Saved with each test run from now on, and shown in the run lists',
+    child: SizedBox(
+      width: widget.width,
+      height: 36,
+      child: TextField(
+        controller: _controller,
+        onChanged: (v) => widget.store.participant.value = v,
+        style: const TextStyle(fontSize: 12.5, color: _ink),
+        decoration: InputDecoration(
+          isDense: true,
+          filled: true,
+          fillColor: Colors.white,
+          prefixIcon: const Icon(Icons.person_outline_rounded, size: 16, color: _muted),
+          prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          hintText: 'Participant, e.g. P01',
+          hintStyle: const TextStyle(fontSize: 12.5, color: _muted),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _line)),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: _line),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 /// One run in a [RunChecklist].
 class RunItem {
-  const RunItem({required this.started, required this.detail, required this.included, this.onChanged, this.live = false});
+  const RunItem({
+    required this.started,
+    required this.detail,
+    required this.included,
+    this.onChanged,
+    this.live = false,
+    this.participant,
+  });
 
   final DateTime started;
+
+  /// Who the run was recorded for, shown before the time.
+  final String? participant;
   final String detail;
   final bool included;
 
@@ -98,7 +162,11 @@ class RunChecklist extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            item.live ? '${when(item.started)} · in progress' : when(item.started),
+                            [
+                              if (item.participant != null) item.participant!,
+                              when(item.started),
+                              if (item.live) 'in progress',
+                            ].join(' · '),
                             style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: _ink),
                           ),
                           Text(item.detail, style: const TextStyle(fontSize: 10.5, color: _muted, height: 1.3)),

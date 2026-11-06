@@ -199,6 +199,9 @@ class OddballRun {
 
   final DateTime started;
   final OddballSettings settings;
+
+  /// Who the run was recorded for, if a participant label was set.
+  String? participant;
   String? output;
   double? latency;
 
@@ -234,6 +237,7 @@ class OddballRun {
     'kind': kind,
     'version': 2,
     'started': started.toIso8601String(),
+    'participant': participant,
     'settings': settings.toJson(),
     'output': output,
     'latencySeconds': latency,
@@ -266,6 +270,7 @@ class OddballRun {
       included: false,
     )
       ..folder = folder
+      ..participant = j['participant'] as String?
       ..output = j['output'] as String?
       ..latency = (j['latencySeconds'] as num?)?.toDouble()
       ..standardDbfs = (j['standardDbfs'] as num?)?.toDouble()
@@ -642,6 +647,7 @@ class OddballSession extends ChangeNotifier {
       return;
     }
     final current = OddballRun(started: DateTime.now(), settings: settings)
+      ..participant = store?.participantLabel
       ..output = outputInfo?.device
       ..latency = outputInfo?.latency
       ..standardDbfs = levels.standard
@@ -651,7 +657,7 @@ class OddballSession extends ChangeNotifier {
     _current = current;
     runs.insert(0, current);
     try {
-      _recorder = await store?.begin(OddballRun.kind, current.started);
+      _recorder = await store?.begin(OddballRun.kind, current.started, participant: current.participant);
     } catch (e) {
       debugPrint('[oddball] not saving this run: $e');
     }

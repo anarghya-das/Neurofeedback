@@ -237,6 +237,9 @@ class AlphaRun {
   final DateTime started;
   final AlphaSettings settings;
 
+  /// Who the run was recorded for, if a participant label was set.
+  String? participant;
+
   /// Spacing of the spectrum bins, Hz.
   final double binHz;
   final blocks = <AlphaBlock>[];
@@ -250,6 +253,7 @@ class AlphaRun {
     'kind': kind,
     'version': 1,
     'started': started.toIso8601String(),
+    'participant': participant,
     'settings': settings.toJson(),
     'binHz': binHz,
     'alphaBandHz': [EegBand.alpha.low, EegBand.alpha.high],
@@ -265,7 +269,9 @@ class AlphaRun {
       settings: AlphaSettings.fromJson((j['settings'] as Map).cast<String, Object?>()),
       binHz: (j['binHz'] as num).toDouble(),
       included: false,
-    )..folder = folder;
+    )
+      ..folder = folder
+      ..participant = j['participant'] as String?;
     run.blocks.addAll([
       for (final b in (j['blocks'] as List).cast<Map<Object?, Object?>>())
         AlphaBlock.fromJson(b.cast<String, Object?>()),
@@ -575,12 +581,13 @@ class AlphaSession extends ChangeNotifier {
     final run = ++_run;
     final settings = _settings;
     final rate = headset.effectiveRate ?? Mw75Protocol.samplingRate;
-    final current = AlphaRun(started: DateTime.now(), settings: settings, binHz: rate / AlphaWindowAnalyzer.size);
+    final current = AlphaRun(started: DateTime.now(), settings: settings, binHz: rate / AlphaWindowAnalyzer.size)
+      ..participant = store?.participantLabel;
     _current = current;
     runs.insert(0, current);
     _setState(AlphaState.preparing, 'Getting ready…');
     try {
-      _recorder = await store?.begin(AlphaRun.kind, current.started);
+      _recorder = await store?.begin(AlphaRun.kind, current.started, participant: current.participant);
     } catch (e) {
       debugPrint('[alpha] not saving this run: $e');
     }
