@@ -98,9 +98,6 @@ class FocusSession extends ChangeNotifier {
   final Mw75Headset headset;
   final ToneOutput _voice;
   final TestRunStore? store;
-
-  /// The participant label the current calibration started with.
-  String? _calibrationParticipant;
   final bool publishToLsl;
 
   FocusState _state = FocusState.idle;
@@ -208,14 +205,12 @@ class FocusSession extends ChangeNotifier {
     final run = ++_run;
     final settings = _settings;
     final started = DateTime.now();
-    final participant = store?.participantLabel;
-    _calibrationParticipant = participant;
     final calibration = _Calibration(settings);
     _calibration = calibration;
     blockNumber = 0;
     _setState(FocusState.preparing, 'Getting ready…');
     try {
-      _recorder = await store?.begin('focus-calibration', started, participant: participant);
+      _recorder = await store?.begin('focus-calibration', started);
     } catch (e) {
       debugPrint('[focus] not saving this calibration: $e');
     }
@@ -319,7 +314,6 @@ class FocusSession extends ChangeNotifier {
         'kind': 'focus-calibration',
         'version': 1,
         'started': started.toIso8601String(),
-        'participant': _calibrationParticipant,
         'settings': {
           'blocksPerCondition': calibration.settings.blocksPerCondition,
           'blockSeconds': calibration.settings.blockSeconds,

@@ -1,37 +1,23 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
-
 import 'protocol.dart';
 import 'stream_processor.dart';
 
 /// Keeps finished test runs on disk so they survive the app closing and can be
 /// pooled across sessions or analysed offline.
 ///
-/// Each run gets a folder under [directory] named after its kind, start time and
-/// participant (when one is set), holding `run.json` (settings and results, enough to pool it again
+/// Each run gets a folder under [directory] named after its kind and start
+/// time, holding `run.json` (settings and results, enough to pool it again
 /// later) and `eeg.csv` (every EEG sample recorded during the run, unfiltered).
 class TestRunStore {
   TestRunStore(this.directory);
 
   final Directory directory;
 
-  /// Who the next runs are recorded for, such as "P01"; empty for nobody in
-  /// particular. A run keeps the label it started with.
-  final participant = ValueNotifier<String>('');
-
-  /// [participant] trimmed, or null when empty.
-  String? get participantLabel {
-    final label = participant.value.trim();
-    return label.isEmpty ? null : label;
-  }
-
-  /// Creates the folder for a run of [kind] starting at [started], with the
-  /// [participant] label at the end of its name when given.
-  Future<RunRecorder> begin(String kind, DateTime started, {String? participant}) async {
-    final who = participant == null ? '' : ' ${safeFolderPart(participant)}';
-    final folder = Directory('${directory.path}/$kind ${_stamp(started)}$who');
+  /// Creates the folder for a run of [kind] starting at [started].
+  Future<RunRecorder> begin(String kind, DateTime started) async {
+    final folder = Directory('${directory.path}/$kind ${_stamp(started)}');
     await folder.create(recursive: true);
     return RunRecorder._(folder);
   }
@@ -50,12 +36,6 @@ class TestRunStore {
     }
     runs.sort((a, b) => b.$1.compareTo(a.$1));
     return runs;
-  }
-
-  /// [label] with characters that are not safe in a folder name replaced.
-  static String safeFolderPart(String label) {
-    final safe = label.trim().replaceAll(RegExp(r'[^A-Za-z0-9 _.\-]'), '_');
-    return safe.length > 40 ? safe.substring(0, 40) : safe;
   }
 
   static String _name(Directory d) => d.uri.pathSegments.where((s) => s.isNotEmpty).last;

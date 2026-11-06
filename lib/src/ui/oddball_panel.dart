@@ -341,7 +341,6 @@ class _OddballControlsState extends State<OddballControls> {
                 for (final r in session.runs)
                   RunItem(
                     started: r.started,
-                    participant: r.participant,
                     live: identical(r, session.current),
                     included: r.included,
                     onChanged: identical(r, session.current) ? null : (v) => session.setIncluded(r, v),
