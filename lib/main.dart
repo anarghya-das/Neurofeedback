@@ -64,7 +64,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   late final focus = FocusSession(headset: headset, store: _store);
 
   /// Finished test runs: one folder each, with results and the raw EEG.
-  static final _store = TestRunStore(Directory('${Platform.environment['HOME']}/Documents/MW75 Tests'));
+  static final _store = TestRunStore(Directory(runsDirectory(Platform.environment)));
   final plot = EegPlotBuffer(seconds: EegTracePainter.maxWindow);
 
   /// Live EEG view: per-channel scale (± µV; 0 = automatic) and time window.
