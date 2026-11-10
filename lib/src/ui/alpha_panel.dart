@@ -63,40 +63,6 @@ class AlphaControls extends StatelessWidget {
               style: TextStyle(fontSize: 11, color: _muted, height: 1.35),
             ),
             const SizedBox(height: 14),
-            const Text(
-              'Blocks',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
-            ),
-            const SizedBox(height: 6),
-            SizedBox(
-              width: double.infinity,
-              child: SegmentedButton<int>(
-                showSelectedIcon: false,
-                style: SegmentedButton.styleFrom(
-                  textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-                  visualDensity: VisualDensity.compact,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-                ),
-                segments: [
-                  for (final n in const [4, 6, 8])
-                    ButtonSegment(
-                      value: n,
-                      label: Text(
-                        '$n each, ${(s.copyWith(blocksPerCondition: n).duration.inSeconds / 60).toStringAsFixed(1)} min',
-                      ),
-                    ),
-                ],
-                selected: {s.blocksPerCondition},
-                onSelectionChanged: busy ? null : (v) => session.settings = s.copyWith(blocksPerCondition: v.first),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${s.blockSeconds.round()} s blocks; the first ${s.settleSeconds.round()} s after each cue are skipped. '
-              'Fewer than ${AlphaSummary.minBlocks} of each cannot be tested.',
-              style: const TextStyle(fontSize: 11, color: _muted, height: 1.35),
-            ),
-            const SizedBox(height: 14),
             SizedBox(
               height: 34,
               width: double.infinity,
@@ -188,6 +154,40 @@ class AlphaControls extends StatelessWidget {
               style: const TextStyle(fontSize: 12, color: _muted, height: 1.35),
             ),
             const SizedBox(height: 14),
+            const Text(
+              'Blocks',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<int>(
+                showSelectedIcon: false,
+                style: SegmentedButton.styleFrom(
+                  textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                  visualDensity: VisualDensity.compact,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                ),
+                segments: [
+                  for (final n in const [4, 6, 8])
+                    ButtonSegment(
+                      value: n,
+                      label: Text(
+                        '$n each, ${(s.copyWith(blocksPerCondition: n).duration.inSeconds / 60).toStringAsFixed(1)} min',
+                      ),
+                    ),
+                ],
+                selected: {s.blocksPerCondition},
+                onSelectionChanged: busy ? null : (v) => session.settings = s.copyWith(blocksPerCondition: v.first),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${s.blockSeconds.round()} s blocks; the first ${s.settleSeconds.round()} s after each cue are skipped. '
+              'Fewer than ${AlphaSummary.minBlocks} of each cannot be tested.',
+              style: const TextStyle(fontSize: 11, color: _muted, height: 1.35),
+            ),
+            const SizedBox(height: 14),
             RunChecklist(
               folder: session.store?.directory.path,
               onClearAll: busy ? null : session.clearResults,
@@ -195,6 +195,7 @@ class AlphaControls extends StatelessWidget {
                 for (final r in session.runs)
                   RunItem(
                     started: r.started,
+                    participant: r.participant,
                     live: identical(r, session.current),
                     included: r.included,
                     onChanged: identical(r, session.current) ? null : (v) => session.setIncluded(r, v),
