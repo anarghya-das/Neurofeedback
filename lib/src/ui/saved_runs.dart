@@ -8,11 +8,21 @@ const _line = Color(0xFFD9DCE3);
 
 /// One run in a [RunChecklist].
 class RunItem {
-  const RunItem({required this.started, required this.detail, required this.included, this.onChanged, this.live = false});
+  const RunItem({
+    required this.started,
+    required this.detail,
+    required this.included,
+    this.participant,
+    this.onChanged,
+    this.live = false,
+  });
 
   final DateTime started;
   final String detail;
   final bool included;
+
+  /// Who the run was for, for example `P01`; null when nobody was named.
+  final String? participant;
 
   /// Null while the run cannot be toggled (for example, while it is running).
   final ValueChanged<bool>? onChanged;
@@ -31,6 +41,13 @@ class RunChecklist extends StatelessWidget {
   final VoidCallback? onClearAll;
 
   static const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  /// `P01 · Today 16:33`, or just the time when no one was named.
+  static String title(RunItem item) {
+    final when = RunChecklist.when(item.started);
+    final who = item.participant;
+    return who == null ? when : '$who · $when';
+  }
 
   static String when(DateTime t) {
     final now = DateTime.now();
@@ -98,7 +115,7 @@ class RunChecklist extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            item.live ? '${when(item.started)} · in progress' : when(item.started),
+                            item.live ? '${title(item)} · in progress' : title(item),
                             style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: _ink),
                           ),
                           Text(item.detail, style: const TextStyle(fontSize: 10.5, color: _muted, height: 1.3)),

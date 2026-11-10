@@ -314,6 +314,7 @@ class FocusSession extends ChangeNotifier {
         'kind': 'focus-calibration',
         'version': 1,
         'started': started.toIso8601String(),
+        'participant': store?.participantId,
         'settings': {
           'blocksPerCondition': calibration.settings.blocksPerCondition,
           'blockSeconds': calibration.settings.blockSeconds,

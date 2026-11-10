@@ -193,12 +193,15 @@ enum OddballState { idle, preparing, running, finishing }
 
 /// One run's tones and epochs, live or loaded from disk.
 class OddballRun {
-  OddballRun({required this.started, required this.settings, this.included = true});
+  OddballRun({required this.started, required this.settings, this.participant, this.included = true});
 
   static const kind = 'oddball';
 
   final DateTime started;
   final OddballSettings settings;
+
+  /// Who the run was for, for example `P01`; null when nobody was named.
+  final String? participant;
   String? output;
   double? latency;
 
@@ -234,6 +237,7 @@ class OddballRun {
     'kind': kind,
     'version': 2,
     'started': started.toIso8601String(),
+    'participant': participant,
     'settings': settings.toJson(),
     'output': output,
     'latencySeconds': latency,
@@ -263,6 +267,7 @@ class OddballRun {
     final run = OddballRun(
       started: DateTime.parse(j['started'] as String),
       settings: OddballSettings.fromJson((j['settings'] as Map).cast<String, Object?>()),
+      participant: j['participant'] as String?,
       included: false,
     )
       ..folder = folder
@@ -641,7 +646,7 @@ class OddballSession extends ChangeNotifier {
       await _tones.stop().catchError((_) {});
       return;
     }
-    final current = OddballRun(started: DateTime.now(), settings: settings)
+    final current = OddballRun(started: DateTime.now(), settings: settings, participant: store?.participantId)
       ..output = outputInfo?.device
       ..latency = outputInfo?.latency
       ..standardDbfs = levels.standard
