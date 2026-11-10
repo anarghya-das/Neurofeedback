@@ -67,6 +67,11 @@ class MainFlutterWindow: NSWindow {
     return "wanted \(wanted), full: \(isFull): nothing to do"
   }
 
+  /// Esc belongs to the test screen, which closes itself and leaves the window
+  /// full screen. Swallowing AppKit's own cancel action keeps it from dropping the
+  /// window out of full screen behind the app's back.
+  override func cancelOperation(_ sender: Any?) {}
+
   private func observeFullScreenTransitions() {
     let center = NotificationCenter.default
     for name in [NSWindow.willEnterFullScreenNotification, NSWindow.willExitFullScreenNotification] {

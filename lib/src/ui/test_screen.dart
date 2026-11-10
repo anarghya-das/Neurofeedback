@@ -66,7 +66,6 @@ class _TestScreenState extends State<TestScreen> {
   @override
   void dispose() {
     widget.listenable.removeListener(_onChange);
-    AppWindow.setFullScreen(false);
     super.dispose();
   }
 
@@ -138,7 +137,7 @@ class _TestScreenState extends State<TestScreen> {
                 child: TextButton(
                   onPressed: _stop,
                   style: TextButton.styleFrom(foregroundColor: _faint),
-                  child: Text(running ? 'Stop (Esc)' : 'Exit full screen (Esc)', style: const TextStyle(fontSize: 13)),
+                  child: Text(running ? 'Stop (Esc)' : 'Exit test (Esc)', style: const TextStyle(fontSize: 13)),
                 ),
               ),
             ],
