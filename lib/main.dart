@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_skill/flutter_skill.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
+import 'package:mw75_neuro/src/app_window.dart';
 
 /// Bench-test app for the MW75 driver.
 ///
@@ -117,6 +118,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   @override
   void initState() {
     super.initState();
+    AppWindow.listen();
     _samples = headset.samples.listen((s) {
       plot.addAll(s);
       bands.addAll(s);
@@ -361,6 +363,32 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                         onSelectionChanged: (v) => setState(() => _view = v.first),
                       ),
                       const Spacer(),
+                      // Windows full screen has no title bar and no control of
+                      // its own, so this is the only way back from it there.
+                      ValueListenableBuilder<bool>(
+                        valueListenable: AppWindow.fullScreen,
+                        builder: (context, full, _) => !full
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: OutlinedButton.icon(
+                                  onPressed: () => AppWindow.setFullScreen(false),
+                                  icon: const Icon(Icons.fullscreen_exit_rounded, size: 16),
+                                  label: const Text(
+                                    'Exit full screen',
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: _ink,
+                                    backgroundColor: Colors.white,
+                                    visualDensity: VisualDensity.compact,
+                                    minimumSize: const Size(0, 34),
+                                    side: const BorderSide(color: _line),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                ),
+                              ),
+                      ),
                       _ParticipantChip(
                         controller: _participant,
                         onChanged: (v) => setState(() => _store.participant = v),
