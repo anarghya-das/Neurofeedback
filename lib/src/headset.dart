@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -160,7 +161,9 @@ class Mw75Headset extends ChangeNotifier {
         statusText = 'No MW75 among paired devices. Pick it from the list if it has another name.';
       }
     } catch (e) {
-      statusText = 'Could not list Bluetooth devices: $e';
+      statusText = e is MissingPluginException
+          ? 'Headset connection is not available on this platform yet (the native Bluetooth driver is macOS only).'
+          : 'Could not list Bluetooth devices: $e';
     }
     notifyListeners();
   }
@@ -194,7 +197,9 @@ class Mw75Headset extends ChangeNotifier {
       );
       _log('Opened command channel ${channels.commandChannel} and data channel ${channels.dataChannel}');
       await Future<void>.delayed(const Duration(milliseconds: 500));
+      _log('Calibrating the clock against LSL…');
       await _calibrateClock();
+      _log('Clock calibrated (offset ${_clockOffset.toStringAsFixed(3)} s)');
 
       // A previous session that ended without disable_raw_mode (a crash, a force
       // quit) leaves the headset streaming. Research Kit then skips the start
@@ -240,7 +245,11 @@ class Mw75Headset extends ChangeNotifier {
         await _syncClock();
       }
 
-      if (publishToLsl) _openOutlet(device);
+      if (publishToLsl) {
+        _log('Creating the LSL outlet…');
+        _openOutlet(device);
+        _log('LSL outlet ready');
+      }
 
       if (!alreadyStreaming) {
         _setStatus('Starting raw EEG…');
@@ -420,10 +429,14 @@ class Mw75Headset extends ChangeNotifier {
   }
 
   void _onChannelClosed(RfcommRole role) {
-    _log('${role.name} channel closed by the headset');
+    final why = _transport.closeReason;
+    _log('${role.name} channel closed by the headset${why == null ? '' : ' ($why)'}');
     if (_state == HeadsetState.streaming || _state == HeadsetState.starting) {
       unawaited(_teardown(sendDisable: false));
-      _setState(HeadsetState.error, 'The headset disconnected. Check that it is on and in range, then start again.');
+      _setState(
+        HeadsetState.error,
+        'The headset disconnected${why == null ? '' : ' ($why)'}. Check that it is on and in range, then start again.',
+      );
     }
   }
 
@@ -496,12 +509,30 @@ class Mw75Headset extends ChangeNotifier {
       log.removeFirst();
     }
     if (kDebugMode) debugPrint('[mw75] $message');
+    if (Platform.isWindows) _appendToLogFile(message);
+  }
+
+  /// On Windows the log is also appended to `%TEMP%\MW75Bench-log.txt` and
+  /// flushed line by line, so the last step before a crash can be read afterwards.
+  static void _appendToLogFile(String message) {
+    try {
+      final dir = Platform.environment['TEMP'] ?? Directory.systemTemp.path;
+      File('$dir\\MW75Bench-log.txt').writeAsStringSync(
+        '${DateTime.now().toIso8601String()}  $message\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } catch (_) {}
   }
 
   static String _lslFilterNote(EegFilterSettings f) =>
       f.applyToLsl ? '${f.describe()} (causal)' : 'none (the app filters only its own plots: ${f.describe()})';
 
-  static String _describe(Object e) => e is PlatformException ? e.message ?? e.code : e.toString();
+  static String _describe(Object e) => e is PlatformException
+      ? e.message ?? e.code
+      : e is MissingPluginException
+          ? 'not available on this platform yet (no native driver)'
+          : e.toString();
 
   static bool _looksLikeMw75(PairedDevice d) => d.name.toUpperCase().contains('MW75');
 

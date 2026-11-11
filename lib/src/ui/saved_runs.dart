@@ -26,7 +26,7 @@ class RunChecklist extends StatelessWidget {
 
   final List<RunItem> items;
 
-  /// Where runs are saved; shows "Show in Finder" when set.
+  /// Where runs are saved; shows "Show in Finder" ("Open folder" on Windows) when set.
   final String? folder;
   final VoidCallback? onClearAll;
 
@@ -57,10 +57,14 @@ class RunChecklist extends StatelessWidget {
               _SmallButton(label: 'Untick all', onPressed: onClearAll!),
             if (folder != null)
               _SmallButton(
-                label: 'Show in Finder',
+                label: Platform.isWindows ? 'Open folder' : 'Show in Finder',
                 onPressed: () async {
                   await Directory(folder).create(recursive: true);
-                  await Process.run('open', [folder]);
+                  if (Platform.isWindows) {
+                    await Process.run('explorer.exe', [folder.replaceAll('/', r'\')]);
+                  } else {
+                    await Process.run('open', [folder]);
+                  }
                 },
               ),
           ],

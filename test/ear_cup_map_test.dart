@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
 
+import 'support/system_fonts.dart';
+
 const b = ContactQuality.best;
 const g = ContactQuality.good;
 const a = ContactQuality.acceptable;
@@ -112,9 +114,7 @@ void main() {
       // Real glyphs instead of the test font's boxes, so the render is readable.
       final loader = FontLoader('Roboto');
       for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
-        final bytes = File(
-          '/System/Library/Fonts/Supplemental/$file',
-        ).readAsBytesSync();
+        final bytes = File(systemFontPath(file)).readAsBytesSync();
         loader.addFont(Future.value(ByteData.sublistView(bytes)));
       }
       await loader.load();

@@ -7,13 +7,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
 
+import 'support/system_fonts.dart';
+
 void main() {
   // MW75_RENDER=/path/to.png flutter test test/montage_info_test.dart
   testWidgets('the info button explains the montages', (tester) async {
     final loader = FontLoader('Roboto');
     for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
       loader.addFont(
-        Future.value(ByteData.sublistView(File('/System/Library/Fonts/Supplemental/$file').readAsBytesSync())),
+        Future.value(ByteData.sublistView(File(systemFontPath(file)).readAsBytesSync())),
       );
     }
     await loader.load();

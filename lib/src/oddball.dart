@@ -867,7 +867,11 @@ class OddballSession extends ChangeNotifier {
   /// "50%" for a volume of 0.5.
   static String percent(double volume) => '${(volume * 100).round()}%';
 
-  static String _describe(Object e) => e is PlatformException ? e.message ?? e.code : e.toString();
+  static String _describe(Object e) => e is PlatformException
+      ? e.message ?? e.code
+      : e is MissingPluginException
+          ? 'not available on this platform yet (no native driver)'
+          : e.toString();
 }
 
 class _Ticker extends ChangeNotifier {

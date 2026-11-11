@@ -1,0 +1,66 @@
+name: Build Windows App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+      - windows-support
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Same pinned version as the macOS workflow: the project was created with
+      # Flutter 3.47.0-0.3.pre (Dart 3.13.0-282.3.beta). Newer betas such as 3.50
+      # make 15 widget tests fail. Raise it deliberately, after running the tests.
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: beta
+          flutter-version: 3.47.0-0.3.pre
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Check Flutter doctor
+        run: flutter doctor -v
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      # The C++ parts of the app (liblsl) are built with the runner's current MSVC.
+      # On a PC with an older Visual C++ runtime (the lab laptop has MSVCP140.dll
+      # 14.27) they crash with an access violation inside MSVCP140.dll, a known
+      # mismatch since Visual Studio 17.10. Ship the runner's runtime next to the
+      # exe: Windows loads the copy in the app folder before the system one.
+      - name: Bundle the Visual C++ runtime
+        shell: pwsh
+        run: |
+          $dest = "build/windows/x64/runner/Release"
+          foreach ($dll in 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            $src = Join-Path $env:WINDIR "System32\$dll"
+            if (Test-Path $src) {
+              Copy-Item $src $dest
+              Write-Host "Bundled $dll $((Get-Item $src).VersionInfo.FileVersion)"
+            }
+          }
+
+      - name: Upload Windows release folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: MW75-Bench-Windows-Release
+          path: build/windows/x64/runner/Release/
+
+      # After the build and upload, so a failing test still leaves the app to try.
+      - name: Run tests
+        run: flutter test

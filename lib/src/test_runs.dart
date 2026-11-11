@@ -4,6 +4,15 @@ import 'dart:io';
 import 'protocol.dart';
 import 'stream_processor.dart';
 
+/// Where runs are saved, under the user's Documents folder.
+///
+/// Windows does not set HOME; USERPROFILE is the same folder there. Without
+/// either, runs go beside the app rather than into a path starting "null".
+String runsDirectory(Map<String, String> environment) {
+  final home = environment['HOME'] ?? environment['USERPROFILE'] ?? '.';
+  return '$home/Documents/MW75 Tests';
+}
+
 /// Keeps finished test runs on disk so they survive the app closing and can be
 /// pooled across sessions or analysed offline.
 ///
