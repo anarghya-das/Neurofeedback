@@ -230,12 +230,21 @@ class AlphaBlock {
 
 /// One run of the alpha test, live or loaded from disk.
 class AlphaRun {
-  AlphaRun({required this.started, required this.settings, required this.binHz, this.included = true});
+  AlphaRun({
+    required this.started,
+    required this.settings,
+    required this.binHz,
+    this.participant,
+    this.included = true,
+  });
 
   static const kind = 'alpha';
 
   final DateTime started;
   final AlphaSettings settings;
+
+  /// Who the run was for, for example `P01`; null when nobody was named.
+  final String? participant;
 
   /// Spacing of the spectrum bins, Hz.
   final double binHz;
@@ -250,6 +259,7 @@ class AlphaRun {
     'kind': kind,
     'version': 1,
     'started': started.toIso8601String(),
+    'participant': participant,
     'settings': settings.toJson(),
     'binHz': binHz,
     'alphaBandHz': [EegBand.alpha.low, EegBand.alpha.high],
@@ -264,6 +274,7 @@ class AlphaRun {
       started: DateTime.parse(j['started'] as String),
       settings: AlphaSettings.fromJson((j['settings'] as Map).cast<String, Object?>()),
       binHz: (j['binHz'] as num).toDouble(),
+      participant: j['participant'] as String?,
       included: false,
     )..folder = folder;
     run.blocks.addAll([
@@ -575,7 +586,12 @@ class AlphaSession extends ChangeNotifier {
     final run = ++_run;
     final settings = _settings;
     final rate = headset.effectiveRate ?? Mw75Protocol.samplingRate;
-    final current = AlphaRun(started: DateTime.now(), settings: settings, binHz: rate / AlphaWindowAnalyzer.size);
+    final current = AlphaRun(
+      started: DateTime.now(),
+      settings: settings,
+      binHz: rate / AlphaWindowAnalyzer.size,
+      participant: store?.participantId,
+    );
     _current = current;
     runs.insert(0, current);
     _setState(AlphaState.preparing, 'Getting ready…');

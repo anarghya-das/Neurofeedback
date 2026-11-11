@@ -238,7 +238,8 @@ void main() {
     expect(find.text('−200 to 0 ms'), findsOneWidget);
 
     final box = tester.getRect(find.byType(ErpPlot));
-    final plot = Rect.fromLTRB(box.left + 44, box.top + 16, box.right, box.bottom - 20);
+    // The plot's own geometry, so a change to the gutters moves the drag with it.
+    final plot = ErpPlot.plotArea(box.size, compact: false).shift(box.topLeft);
     Offset at(double seconds) =>
         Offset(plot.left + (seconds - ErpEpoch.start) / (ErpEpoch.end - ErpEpoch.start) * plot.width, plot.center.dy);
 
@@ -303,6 +304,38 @@ void main() {
     final used = tester.getRect(find.text('Used'));
     for (final label in ['Standard', 'Rare']) {
       expect(tester.getRect(find.text(label)).right, lessThanOrEqualTo(used.left), reason: label);
+    }
+  });
+
+  // The units used to be drawn as labels of their own in the corners, where
+  // they landed on top of the end ticks. They ride on those ticks now, so the
+  // gutters have to be wide enough to hold a tick label with its unit.
+  testWidgets('the end tick labels fit in the plot gutters', (tester) async {
+    final loader = FontLoader('Roboto');
+    for (final file in ['Arial.ttf', 'Arial Bold.ttf']) {
+      final bytes = File(systemFontPath(file)).readAsBytesSync();
+      loader.addFont(Future.value(ByteData.sublistView(bytes)));
+    }
+    await loader.load();
+
+    // Measured in the loaded system face, not the test's one-box-per-glyph
+    // font, so the widths match what the painter really draws.
+    double width(String s) =>
+        (TextPainter(
+          text: TextSpan(text: s, style: const TextStyle(fontSize: 10, fontFamily: 'Roboto')),
+          textDirection: TextDirection.ltr,
+        )..layout()).width;
+
+    for (final size in [const Size(420, 200), const Size(900, 320), const Size(1600, 520)]) {
+      final plot = ErpPlot.plotArea(size, compact: false);
+      // The µV labels are right-aligned 6 points left of the plot; the widest
+      // is the top one, which carries the unit.
+      expect(width('+100 µV'), lessThanOrEqualTo(plot.left - 6), reason: '$size left gutter');
+      // The ms labels are centred on their tick, the last one on the right edge.
+      expect(width('800 ms') / 2, lessThanOrEqualTo(size.width - plot.right), reason: '$size right gutter');
+      // And the last two ticks are 200 ms apart, so their labels must not meet.
+      final tickGap = plot.width * 200 / ((ErpEpoch.end - ErpEpoch.start) * 1000);
+      expect(width('600') / 2 + width('800 ms') / 2, lessThan(tickGap), reason: '$size tick spacing');
     }
   });
 }

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_skill/flutter_skill.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
+import 'package:mw75_neuro/src/app_window.dart';
 
 /// Bench-test app for the MW75 driver.
 ///
@@ -71,12 +72,20 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   int _eegScale = 100;
   double _eegWindow = 4;
 
+  /// Which way up the ERP plots draw a positive voltage; a drawing convention
+  /// only, shared by the average and the per-channel tiles under it.
+  ErpPolarity _erpPolarity = ErpPolarity.positiveUp;
+
   /// Per-channel limits for the automatic scale, OpenBCI GUI style.
   final _eegAuto = EegAutoScale();
   Offset? _eegHover;
   StreamSubscription<List<Mw75Sample>>? _samples;
   Timer? _consoleStatus;
   final _streamName = TextEditingController(text: Mw75Headset.defaultStreamName);
+
+  /// Who the tests are being run on. Shared by every test: whatever is in
+  /// here when one starts is saved with that run.
+  final _participant = TextEditingController(text: _store.participant);
 
   final bands = BandPowerEstimator();
   final _bandPowers = ValueNotifier<BandPowers?>(null);
@@ -109,6 +118,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   @override
   void initState() {
     super.initState();
+    AppWindow.listen();
     _samples = headset.samples.listen((s) {
       plot.addAll(s);
       bands.addAll(s);
@@ -353,8 +363,38 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                         onSelectionChanged: (v) => setState(() => _view = v.first),
                       ),
                       const Spacer(),
+                      // Windows full screen has no title bar and no control of
+                      // its own, so this is the only way back from it there.
+                      ValueListenableBuilder<bool>(
+                        valueListenable: AppWindow.fullScreen,
+                        builder: (context, full, _) => !full
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: OutlinedButton.icon(
+                                  onPressed: () => AppWindow.setFullScreen(false),
+                                  icon: const Icon(Icons.fullscreen_exit_rounded, size: 16),
+                                  label: const Text(
+                                    'Exit full screen',
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: _ink,
+                                    backgroundColor: Colors.white,
+                                    visualDensity: VisualDensity.compact,
+                                    minimumSize: const Size(0, 34),
+                                    side: const BorderSide(color: _line),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                ),
+                              ),
+                      ),
+                      _ParticipantChip(
+                        controller: _participant,
+                        onChanged: (v) => setState(() => _store.participant = v),
+                      ),
                       // With the panel hidden, still show whether EEG is streaming.
-                      if (!_panelOpen) HeadsetStatusBadge(headset: headset),
+                      if (!_panelOpen) ...[const SizedBox(width: 10), HeadsetStatusBadge(headset: headset)],
                     ],
                   ),
                   const SizedBox(height: 14),
@@ -539,13 +579,31 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
               flex: 3,
               child: _Card(
                 title: 'Average response',
-                trailing: _ChannelSetPicker(
-                  value: _erpSource,
-                  erp: true,
-                  onChanged: (v) => setState(() => _erpSource = v),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _Picker<ErpPolarity>(
+                      value: _erpPolarity,
+                      options: ErpPolarity.values,
+                      label: (p) => p.label,
+                      tooltip: 'Which way up a positive voltage is drawn',
+                      onChanged: (v) => setState(() => _erpPolarity = v),
+                    ),
+                    const SizedBox(width: 6),
+                    _ChannelSetPicker(
+                      value: _erpSource,
+                      erp: true,
+                      onChanged: (v) => setState(() => _erpSource = v),
+                    ),
+                  ],
                 ),
                 child: Expanded(
-                  child: ErpPanel(session: oddball, channels: _erpSource.channels, minus: _erpSource.minus),
+                  child: ErpPanel(
+                    session: oddball,
+                    channels: _erpSource.channels,
+                    minus: _erpSource.minus,
+                    polarity: _erpPolarity,
+                  ),
                 ),
               ),
             ),
@@ -559,6 +617,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                   child: ErpChannelGrid(
                     session: oddball,
                     selected: _erpSource.channel,
+                    polarity: _erpPolarity,
                     onSelected: (c) => setState(() => _erpSource = _ChannelSet.channel(c)),
                   ),
                 ),
@@ -639,6 +698,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
   /// Why a guided test cannot start now: no EEG, or another test running.
   String? _testBlockedReason({required Object except}) {
     if (headset.state != HeadsetState.streaming) return 'Start raw EEG in the Headset card first.';
+    if (_store.participantId == null) return 'Add a participant at the top right first.';
     if (!identical(except, oddball) && oddball.busy) return 'Wait for the oddball test to finish.';
     if (!identical(except, alpha) && alpha.busy) return 'Wait for the alpha test to finish.';
     if (!identical(except, focus) && focus.calibrating) return 'Wait for the focus calibration to finish.';
@@ -659,6 +719,7 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
                 builder: (context, _) => FocusControls(
                   session: focus,
                   startBlockedReason: _testBlockedReason(except: focus),
+                  visual: _focusVisual,
                 ),
               ),
             ),
@@ -673,12 +734,24 @@ class _BenchPageState extends State<BenchPage> with SingleTickerProviderStateMix
               flex: 3,
               child: _Card(
                 title: 'Focus now',
-                trailing: _Picker<FocusVisual>(
-                  value: _focusVisual,
-                  options: FocusVisual.values,
-                  label: (v) => v.label,
-                  tooltip: 'How the score is pictured',
-                  onChanged: (v) => setState(() => _focusVisual = v),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: 'Full screen for the participant',
+                      icon: const Icon(Icons.fullscreen_rounded, size: 18),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => Navigator.of(context).push(focusFullScreenRoute(focus, _focusVisual)),
+                    ),
+                    const SizedBox(width: 4),
+                    _Picker<FocusVisual>(
+                      value: _focusVisual,
+                      options: FocusVisual.values,
+                      label: (v) => v.label,
+                      tooltip: 'How the score is pictured',
+                      onChanged: (v) => setState(() => _focusVisual = v),
+                    ),
+                  ],
                 ),
                 child: Expanded(
                   child: FocusScoreView(session: focus, visual: _focusVisual),
@@ -788,6 +861,46 @@ class _FoldLabel extends StatelessWidget {
       Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18, color: _muted),
     ],
   );
+}
+
+/// Who the runs are saved under, in the top bar because it belongs to every
+/// test rather than to one of them. Empty, it blocks Start test, so no run can
+/// go out unlabelled — which is what used to happen when the app restarted.
+class _ParticipantChip extends StatelessWidget {
+  const _ParticipantChip({required this.controller, required this.onChanged});
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    OutlineInputBorder border(Color color) =>
+        OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: color));
+    return Tooltip(
+      message: 'Who the runs are saved under; every test needs one',
+      child: SizedBox(
+        width: 210,
+        child: TextField(
+          controller: controller,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
+          decoration: InputDecoration(
+            hintText: 'Add participant',
+            hintStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: _muted),
+            prefixIcon: const Icon(Icons.person_outline_rounded, size: 17, color: _muted),
+            prefixIconConstraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            filled: true,
+            fillColor: Colors.white,
+            isDense: true,
+            contentPadding: const EdgeInsets.fromLTRB(2, 9, 10, 9),
+            border: border(_line),
+            enabledBorder: border(_line),
+            focusedBorder: border(_ink),
+          ),
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
 }
 
 class _StreamSettings extends StatelessWidget {

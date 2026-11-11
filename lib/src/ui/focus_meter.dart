@@ -6,6 +6,7 @@ import '../focus_metric.dart';
 import '../focus_session.dart';
 import '../lsl_eeg_outlet.dart';
 import 'focus_visuals.dart';
+import 'test_screen.dart';
 
 const _ink = Color(0xFF111216);
 const _muted = Color(0xFF69707D);
@@ -14,12 +15,37 @@ const _tabular = [FontFeature.tabularFigures()];
 const _scoreColor = Color(0xFF4F39F6);
 const _restColor = Color(0xFF5D80BD);
 
+/// The participant's full-screen view: the calibration dot and instruction in
+/// large type, then the live score picture. It stays open after calibration so
+/// the feedback follows; Esc stops a running calibration and closes it.
+Route<void> focusFullScreenRoute(FocusSession session, FocusVisual visual) => TestScreen.route(
+  TestScreen(
+    listenable: session,
+    isRunning: () => session.calibrating,
+    onStop: session.stop,
+    closeWhenDone: false,
+    background: const Color(0xFFF5F6F8),
+    body: (context) => Padding(
+      padding: const EdgeInsets.fromLTRB(64, 64, 64, 48),
+      child: FocusScoreView(session: session, visual: visual, fullScreen: true),
+    ),
+  ),
+);
+
 /// Calibration controls, model quality and what drives the score.
 class FocusControls extends StatelessWidget {
-  const FocusControls({super.key, required this.session, this.startBlockedReason});
+  const FocusControls({
+    super.key,
+    required this.session,
+    this.startBlockedReason,
+    this.visual = FocusVisual.flame,
+  });
 
   final FocusSession session;
   final String? startBlockedReason;
+
+  /// The picture the full-screen view shows after calibration.
+  final FocusVisual visual;
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +102,18 @@ class FocusControls extends StatelessWidget {
               height: 34,
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: busy ? session.stop : (blocked ? null : session.calibrate),
+                onPressed: busy
+                    ? session.stop
+                    : (blocked
+                          ? null
+                          : () {
+                              session.calibrate();
+                              // calibrate() turns busy at once when it can run; then
+                              // the participant gets the full-screen view.
+                              if (session.calibrating) {
+                                Navigator.of(context).push(focusFullScreenRoute(session, visual));
+                              }
+                            }),
                 icon: Icon(busy ? Icons.stop_rounded : Icons.play_arrow_rounded, size: 15),
                 label: Text(
                   busy ? 'Stop calibration' : (model == null ? 'Calibrate' : 'Recalibrate'),
@@ -241,17 +278,26 @@ class _ModelSummary extends StatelessWidget {
 /// The animation is hidden during calibration, so focus and rest blocks look
 /// the same apart from the instruction.
 class FocusScoreView extends StatelessWidget {
-  const FocusScoreView({super.key, required this.session, this.visual = FocusVisual.flame});
+  const FocusScoreView({
+    super.key,
+    required this.session,
+    this.visual = FocusVisual.flame,
+    this.fullScreen = false,
+  });
 
   final FocusSession session;
   final FocusVisual visual;
+
+  /// Larger calibration instructions and no countdown, for the participant's
+  /// full-screen view.
+  final bool fullScreen;
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: Listenable.merge([session, session.progress]),
       builder: (context, _) {
-        if (session.calibrating) return _CalibrationPrompt(session: session);
+        if (session.calibrating) return _CalibrationPrompt(session: session, large: fullScreen);
         if (session.model == null) {
           return const Center(
             child: Text('Calibrate to start scoring.', style: TextStyle(fontSize: 13, color: _muted)),
@@ -444,9 +490,12 @@ class _ScoreReadout extends StatelessWidget {
 }
 
 class _CalibrationPrompt extends StatelessWidget {
-  const _CalibrationPrompt({required this.session});
+  const _CalibrationPrompt({required this.session, this.large = false});
 
   final FocusSession session;
+
+  /// Full-screen sizes, without the countdown.
+  final bool large;
 
   @override
   Widget build(BuildContext context) {
@@ -464,18 +513,26 @@ class _CalibrationPrompt extends StatelessWidget {
         Text(
           title,
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: focus == true ? _scoreColor : _ink),
+          style: TextStyle(
+            fontSize: large ? 40 : 22,
+            fontWeight: FontWeight.w800,
+            color: focus == true ? _scoreColor : _ink,
+          ),
         ),
-        const SizedBox(height: 6),
-        Text(detail, style: const TextStyle(fontSize: 13, color: _muted)),
-        const SizedBox(height: 24),
+        SizedBox(height: large ? 12 : 6),
+        Text(
+          detail,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: large ? 24 : 13, color: _muted),
+        ),
+        SizedBox(height: large ? 56 : 24),
         Container(
-          width: 14,
-          height: 14,
+          width: large ? 16 : 14,
+          height: large ? 16 : 14,
           decoration: const BoxDecoration(color: _ink, shape: BoxShape.circle),
         ),
         const SizedBox(height: 24),
-        if (left != null)
+        if (left != null && !large)
           Text(
             '$left s',
             style: const TextStyle(fontSize: 13, color: _muted, fontFeatures: _tabular),

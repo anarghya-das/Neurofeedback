@@ -24,6 +24,17 @@ class TestRunStore {
 
   final Directory directory;
 
+  /// Who the runs are for, for example `P01`. Whatever is in here when a test
+  /// starts is saved with that run and shown beside it in the results list.
+  /// Empty until someone fills it in.
+  String participant = '';
+
+  /// [participant] without surrounding blanks, or null while it is empty.
+  String? get participantId {
+    final id = participant.trim();
+    return id.isEmpty ? null : id;
+  }
+
   /// Creates the folder for a run of [kind] starting at [started].
   Future<RunRecorder> begin(String kind, DateTime started) async {
     final folder = Directory('${directory.path}/$kind ${_stamp(started)}');

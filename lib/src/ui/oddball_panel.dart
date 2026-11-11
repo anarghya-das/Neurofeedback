@@ -11,6 +11,7 @@ import '../sound_calibration.dart';
 import 'number_field.dart';
 import 'saved_runs.dart';
 import 'sound_calibration_dialog.dart';
+import 'test_screen.dart';
 
 const _ink = Color(0xFF111216);
 const _muted = Color(0xFF69707D);
@@ -21,6 +22,42 @@ const _tabular = [FontFeature.tabularFigures()];
 const erpStandardColor = Color(0xFF5D80BD);
 const erpRareColor = Color(0xFFE5484D);
 const erpDifferenceColor = Color(0xFF111216);
+
+/// Which way up the ERP plots draw a positive voltage. The data is untouched:
+/// this only flips the drawing, for people used to reading ERPs the other way.
+enum ErpPolarity {
+  positiveUp('Positive up', 1),
+  positiveDown('Positive down', -1);
+
+  const ErpPolarity(this.label, this.sign);
+
+  final String label;
+
+  /// What a value is multiplied by before it is drawn.
+  final double sign;
+}
+
+/// The participant's full-screen view of an oddball run: grey, a fixation dot,
+/// and what to do in large type. The tones carry the task, so all the screen
+/// has to do is give the eyes somewhere to rest and keep the settings out of
+/// sight. No tone count: watching it would pull against the silent counting.
+Route<void> oddballTestScreenRoute(OddballSession session) => TestScreen.route(
+  TestScreen(
+    listenable: session,
+    isRunning: () => session.busy,
+    onStop: session.stop,
+    instruction: () => oddballInstruction(session.state, rareIsHigh: session.settings.rareIsHigh),
+  ),
+);
+
+/// What the participant is told at each point of a run, or null when the
+/// screen should show the dot alone.
+String? oddballInstruction(OddballState state, {required bool rareIsHigh}) => switch (state) {
+  OddballState.preparing => 'Look at the dot. The tones start in a moment.',
+  OddballState.running => 'Silently count the ${rareIsHigh ? 'high' : 'low'} tones. Keep still and look at the dot.',
+  OddballState.finishing => 'Done. You can relax.',
+  OddballState.idle => null,
+};
 
 /// Output, sound level, settings, start/stop and progress for an
 /// [OddballSession].
@@ -74,6 +111,82 @@ class _OddballControlsState extends State<OddballControls> {
               'Plays two tones, one of them rarely, and averages the EEG around each. A brain '
               'response to the rare tone (the P300) shows the headset is recording EEG.',
               style: TextStyle(fontSize: 11, color: _muted, height: 1.35),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                SizedBox(
+                  height: 34,
+                  child: OutlinedButton.icon(
+                    onPressed: busy ? null : session.preview,
+                    icon: const Icon(Icons.volume_up_rounded, size: 15),
+                    label: const Text('Preview', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _ink,
+                      side: const BorderSide(color: _line),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: SizedBox(
+                    height: 34,
+                    child: ElevatedButton.icon(
+                      onPressed: busy
+                          ? session.stop
+                          : (blocked
+                                ? null
+                                : () {
+                                    session.start();
+                                    // start() turns busy at once when it can run; then
+                                    // the participant gets the fixation screen.
+                                    if (session.busy) Navigator.of(context).push(oddballTestScreenRoute(session));
+                                  }),
+                      icon: Icon(busy ? Icons.stop_rounded : Icons.play_arrow_rounded, size: 15),
+                      label: Text(
+                        busy ? 'Stop test' : 'Start test',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        elevation: 0,
+                        backgroundColor: const Color(0xFF080615),
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: const Color(0xFFF2F2F5),
+                        disabledForegroundColor: const Color(0xFF9CA3AF),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (session.state == OddballState.running && session.plannedTrials > 0) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: session.trialsPlayed / session.plannedTrials,
+                  minHeight: 5,
+                  backgroundColor: const Color(0xFFEDEEF1),
+                  color: _ink,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Tone ${session.trialsPlayed} of ${session.plannedTrials}',
+                style: const TextStyle(fontSize: 11, color: _muted, fontFeatures: _tabular),
+              ),
+              const SizedBox(height: 6),
+            ],
+            Text(
+              blocked ? blockedReason : session.statusText,
+              style: TextStyle(
+                fontSize: 12,
+                color: session.state == OddballState.running ? _ink : _muted,
+                fontWeight: session.state == OddballState.running ? FontWeight.w600 : FontWeight.w400,
+                height: 1.35,
+              ),
             ),
             const SizedBox(height: 14),
             _label('Play tones through'),
@@ -267,73 +380,6 @@ class _OddballControlsState extends State<OddballControls> {
               onChanged: (v) => set(s.copyWith(highPassHz: v / 10)),
             ),
             const SizedBox(height: 14),
-            Row(
-              children: [
-                SizedBox(
-                  height: 34,
-                  child: OutlinedButton.icon(
-                    onPressed: busy ? null : session.preview,
-                    icon: const Icon(Icons.volume_up_rounded, size: 15),
-                    label: const Text('Preview', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _ink,
-                      side: const BorderSide(color: _line),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: SizedBox(
-                    height: 34,
-                    child: ElevatedButton.icon(
-                      onPressed: busy ? session.stop : (blocked ? null : session.start),
-                      icon: Icon(busy ? Icons.stop_rounded : Icons.play_arrow_rounded, size: 15),
-                      label: Text(
-                        busy ? 'Stop test' : 'Start test',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        elevation: 0,
-                        backgroundColor: const Color(0xFF080615),
-                        foregroundColor: Colors.white,
-                        disabledBackgroundColor: const Color(0xFFF2F2F5),
-                        disabledForegroundColor: const Color(0xFF9CA3AF),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            if (session.state == OddballState.running && session.plannedTrials > 0) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: LinearProgressIndicator(
-                  value: session.trialsPlayed / session.plannedTrials,
-                  minHeight: 5,
-                  backgroundColor: const Color(0xFFEDEEF1),
-                  color: _ink,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Tone ${session.trialsPlayed} of ${session.plannedTrials}',
-                style: const TextStyle(fontSize: 11, color: _muted, fontFeatures: _tabular),
-              ),
-              const SizedBox(height: 6),
-            ],
-            Text(
-              blocked ? blockedReason : session.statusText,
-              style: TextStyle(
-                fontSize: 12,
-                color: session.state == OddballState.running ? _ink : _muted,
-                fontWeight: session.state == OddballState.running ? FontWeight.w600 : FontWeight.w400,
-                height: 1.35,
-              ),
-            ),
-            const SizedBox(height: 12),
             RunChecklist(
               folder: session.store?.directory.path,
               onClearAll: busy ? null : session.clearResults,
@@ -341,6 +387,7 @@ class _OddballControlsState extends State<OddballControls> {
                 for (final r in session.runs)
                   RunItem(
                     started: r.started,
+                    participant: r.participant,
                     live: identical(r, session.current),
                     included: r.included,
                     onChanged: identical(r, session.current) ? null : (v) => session.setIncluded(r, v),
@@ -536,10 +583,19 @@ class _Captioned extends StatelessWidget {
 /// bands, their difference, the two tests and how many tones were used. The
 /// baseline can be changed from a menu or by dragging across the plot.
 class ErpPanel extends StatelessWidget {
-  const ErpPanel({super.key, required this.session, required this.channels, this.minus = const []});
+  const ErpPanel({
+    super.key,
+    required this.session,
+    required this.channels,
+    this.minus = const [],
+    this.polarity = ErpPolarity.positiveUp,
+  });
 
   final OddballSession session;
   final List<int> channels;
+
+  /// Which way up a positive voltage is drawn.
+  final ErpPolarity polarity;
 
   /// Subtracted from [channels] for a bipolar derivation; see
   /// [ErpSummary.compute].
@@ -557,14 +613,18 @@ class ErpPanel extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: _Legend(summary: summary)),
+                Expanded(child: _Legend(summary: summary, polarity: polarity)),
                 const SizedBox(width: 10),
                 _BaselinePicker(session: session),
               ],
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: ErpPlot(summary: summary, onBaselineChanged: (window) => session.baseline = window),
+              child: ErpPlot(
+                summary: summary,
+                polarity: polarity,
+                onBaselineChanged: (window) => session.baseline = window,
+              ),
             ),
             const SizedBox(height: 12),
             LayoutBuilder(
@@ -622,9 +682,18 @@ class ErpPanel extends StatelessWidget {
 
 /// Small plots of every channel in ear-cup order; tap one to select it.
 class ErpChannelGrid extends StatelessWidget {
-  const ErpChannelGrid({super.key, required this.session, this.selected, required this.onSelected});
+  const ErpChannelGrid({
+    super.key,
+    required this.session,
+    this.selected,
+    required this.onSelected,
+    this.polarity = ErpPolarity.positiveUp,
+  });
 
   final OddballSession session;
+
+  /// Which way up a positive voltage is drawn; follows the plot above.
+  final ErpPolarity polarity;
 
   /// Highlighted channel (0-based), if the main plot shows a single channel.
   final int? selected;
@@ -684,7 +753,7 @@ class ErpChannelGrid extends StatelessWidget {
                           ],
                         ),
                         Expanded(
-                          child: ErpPlot(summary: s, range: range, compact: true),
+                          child: ErpPlot(summary: s, range: range, compact: true, polarity: polarity),
                         ),
                       ],
                     ),
@@ -730,14 +799,25 @@ class ErpChannelGrid extends StatelessWidget {
 
 /// Standard and rare averages (with ±1 SE bands in the full size), their
 /// difference, onset at 0, the test windows and the baseline shaded. Positive
-/// is up.
+/// is up unless [polarity] says otherwise; the readout always reports the
+/// measured sign.
 ///
 /// With [onBaselineChanged], dragging across the part before onset picks a
 /// new baseline window, and hovering reads out the traces.
 class ErpPlot extends StatefulWidget {
-  const ErpPlot({super.key, required this.summary, this.range, this.compact = false, this.onBaselineChanged});
+  const ErpPlot({
+    super.key,
+    required this.summary,
+    this.range,
+    this.compact = false,
+    this.polarity = ErpPolarity.positiveUp,
+    this.onBaselineChanged,
+  });
 
   final ErpSummary summary;
+
+  /// Which way up a positive voltage is drawn.
+  final ErpPolarity polarity;
 
   /// Half-height in µV; chosen from the data when null.
   final double? range;
@@ -748,6 +828,16 @@ class ErpPlot extends StatefulWidget {
 
   /// A round half-height that fits [peak] µV, at least 2 µV.
   static double niceRange(double peak) => _ranges.firstWhere((r) => r >= peak && r >= 2, orElse: () => 1000);
+
+  /// The traces' area within a plot of [size]. The gutters hold the tick
+  /// labels: wide enough on the left for `+100 µV` and on the right for the
+  /// half of `800 ms` that hangs past the last tick.
+  static Rect plotArea(Size size, {required bool compact}) => Rect.fromLTRB(
+    compact ? 0.0 : 54.0,
+    compact ? 2.0 : 16.0,
+    size.width - (compact ? 0.0 : 26.0),
+    size.height - (compact ? 0.0 : 20.0),
+  );
 
   @override
   State<ErpPlot> createState() => _ErpPlotState();
@@ -779,6 +869,7 @@ class _ErpPlotState extends State<ErpPlot> {
           summary,
           range: widget.range ?? ErpPlot.niceRange(summary.peak),
           compact: widget.compact,
+          polarity: widget.polarity,
           baseline: _drag ?? summary.baseline,
           hover: _hover,
         ),
@@ -789,7 +880,7 @@ class _ErpPlotState extends State<ErpPlot> {
     if (widget.compact || onBaselineChanged == null) return paint;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final plot = _ErpPainter.area(constraints.biggest, compact: false);
+        final plot = ErpPlot.plotArea(constraints.biggest, compact: false);
         double? timeAt(Offset p) =>
             plot.contains(p) ? ErpEpoch.start + (p.dx - plot.left) / plot.width * (ErpEpoch.end - ErpEpoch.start) : null;
         // The baseline has to come before onset; 10 ms steps.
@@ -830,11 +921,19 @@ class _ErpPlotState extends State<ErpPlot> {
 }
 
 class _ErpPainter extends CustomPainter {
-  _ErpPainter(this.summary, {required this.range, required this.compact, this.baseline, this.hover});
+  _ErpPainter(
+    this.summary, {
+    required this.range,
+    required this.compact,
+    this.polarity = ErpPolarity.positiveUp,
+    this.baseline,
+    this.hover,
+  });
 
   final ErpSummary summary;
   final double range;
   final bool compact;
+  final ErpPolarity polarity;
 
   /// Shaded in the full size, seconds after onset.
   final (double, double)? baseline;
@@ -842,16 +941,14 @@ class _ErpPainter extends CustomPainter {
   /// Read out in the full size, seconds after onset.
   final double? hover;
 
-  /// The traces' area within [size].
-  static Rect area(Size size, {required bool compact}) =>
-      Rect.fromLTRB(compact ? 0.0 : 44.0, compact ? 2.0 : 16.0, size.width, size.height - (compact ? 0.0 : 20.0));
-
   @override
   void paint(Canvas canvas, Size size) {
-    final plot = area(size, compact: compact);
+    final plot = ErpPlot.plotArea(size, compact: compact);
     if (plot.width <= 0 || plot.height <= 0) return;
     double x(double t) => plot.left + plot.width * (t - ErpEpoch.start) / (ErpEpoch.end - ErpEpoch.start);
-    double y(double v) => plot.center.dy - v / range * plot.height / 2;
+    // The only place the polarity acts: every trace, band and µV tick goes
+    // through here, so flipping it turns the whole picture over at once.
+    double y(double v) => plot.center.dy - polarity.sign * v / range * plot.height / 2;
     final label = TextPainter(textDirection: TextDirection.ltr);
     void text(
       String s,
@@ -888,16 +985,20 @@ class _ErpPainter extends CustomPainter {
       ..color = const Color(0xFFEEF0F3)
       ..strokeWidth = 1;
     if (!compact) {
-      for (var ms = -200; ms <= 800; ms += 100) {
+      // Each unit rides on its last tick. Drawn as a label of its own in the
+      // corner it landed on top of that tick, which sits in the same place.
+      const lastTick = 800;
+      for (var ms = -200; ms <= lastTick; ms += 100) {
         canvas.drawLine(Offset(x(ms / 1000), plot.top), Offset(x(ms / 1000), plot.bottom), grid);
-        if (ms % 200 == 0) text(ms == 0 ? '0' : '$ms', Offset(x(ms / 1000), plot.bottom + 10), center: true);
+        if (ms % 200 != 0) continue;
+        final label = ms == 0 ? '0' : '$ms';
+        text(ms == lastTick ? '$label ms' : label, Offset(x(ms / 1000), plot.bottom + 10), center: true);
       }
-      text('ms', Offset(plot.right, plot.bottom + 10), right: true);
       for (final v in [range, range / 2, -range / 2, -range]) {
         canvas.drawLine(Offset(plot.left, y(v)), Offset(plot.right, y(v)), grid);
-        text('${v > 0 ? '+' : '−'}${_scale(v.abs())}', Offset(plot.left - 6, y(v)), right: true);
+        final label = '${v > 0 ? '+' : '−'}${_scale(v.abs())}';
+        text(v == range ? '$label µV' : label, Offset(plot.left - 6, y(v)), right: true);
       }
-      text('µV', Offset(plot.left - 6, plot.top - 8), right: true);
     }
     final axis = Paint()
       ..color = const Color(0xFFB8BDC7)
@@ -1004,6 +1105,7 @@ class _ErpPainter extends CustomPainter {
       old.summary != summary ||
       old.range != range ||
       old.compact != compact ||
+      old.polarity != polarity ||
       old.baseline != baseline ||
       old.hover != hover;
 }
@@ -1014,9 +1116,10 @@ String _ms((double, double) window) => '${(window.$1 * 1000).round()}–${(windo
 String _scale(double v) => v >= 10 || v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
 
 class _Legend extends StatelessWidget {
-  const _Legend({required this.summary});
+  const _Legend({required this.summary, required this.polarity});
 
   final ErpSummary summary;
+  final ErpPolarity polarity;
 
   @override
   Widget build(BuildContext context) {
@@ -1045,7 +1148,10 @@ class _Legend extends StatelessWidget {
         key(erpStandardColor, 'Standard (${summary.standardCount})'),
         key(erpRareColor, 'Rare (${summary.rareCount})'),
         key(erpDifferenceColor, 'Rare − standard'),
-        const Text('Shading ±1 SE · positive up', style: TextStyle(fontSize: 11, color: _muted)),
+        Text(
+          'Shading ±1 SE · ${polarity.label.toLowerCase()}',
+          style: const TextStyle(fontSize: 11, color: _muted),
+        ),
       ],
     );
   }
