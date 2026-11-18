@@ -178,4 +178,11 @@ void main() {
       expect(log.where((l) => l == '[speech] spoke voice=Microsoft David Desktop: "$cue"'), hasLength(3));
     }
   });
+
+  test('the voice is female US English, like the Mac app, whichever voice is the default', () {
+    final script = WindowsSpeech.scriptFor('Eyes open.');
+    expect(script, contains('SelectVoice("Microsoft Zira Desktop")'));
+    expect(script, contains('VoiceGender]::Female'));
+    expect(script.indexOf('SelectVoice'), lessThan(script.indexOf(r'$s.Speak')));
+  });
 }

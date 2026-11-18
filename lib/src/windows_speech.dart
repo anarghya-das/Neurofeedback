@@ -41,6 +41,12 @@ class WindowsSpeech {
         r'Add-Type -AssemblyName System.Speech; '
         r'$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
         r'$s.SetOutputToDefaultAudioDevice(); '
+        // A female US English voice like the Mac app's (Samantha): Zira, else
+        // the closest Windows has. The default, David, is male.
+        r'try { $s.SelectVoice("Microsoft Zira Desktop") } catch { '
+        r'try { $s.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female, '
+        r'[System.Speech.Synthesis.VoiceAge]::Adult, 0, [System.Globalization.CultureInfo]::GetCultureInfo("en-US")) } catch { } '
+        r'} '
         r'$p = New-Object System.Speech.Synthesis.PromptBuilder; '
         r'$p.AppendBreak([TimeSpan]::FromMilliseconds(300)); '
         "\$p.AppendText('$quoted'); "
