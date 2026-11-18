@@ -148,6 +148,14 @@ int _connectBlocking(int address, int service16, int port) {
 
 int _nonZero(int error) => error == 0 ? 1 : error;
 
+/// Runs [_connectBlocking] in a new isolate. A top-level function, so the
+/// closure sent to the isolate holds only these three numbers: a closure made
+/// inside [WindowsRfcomm.open] also captures `this` (with its timers and
+/// ports), which cannot be sent, and the start failed with "object is
+/// unsendable". Public for a test on Windows.
+Future<int> connectRfcommInIsolate(int address, int service16, int port) =>
+    Isolate.run(() => _connectBlocking(address, service16, port));
+
 /// Isolate entry point: `[socket, role (0 command, 1 data), SendPort]`. Sends
 /// `[role, bytes, time]` for each read and `[role, null, 0.0, reason]` when the
 /// link ends. The read blocks until data arrives or the main isolate closes the
@@ -233,10 +241,10 @@ class WindowsRfcomm {
       throw PlatformException(code: 'cancelled', message: 'Opening the headset was cancelled.');
     }
 
-    final command = await Isolate.run(() => _connectBlocking(target, commandServiceUuid16, 0));
+    final command = await connectRfcommInIsolate(target, commandServiceUuid16, 0);
     abandonIfClosed([command]);
     if (command < 0) throw _connectError('command channel', -command);
-    final data = await Isolate.run(() => _connectBlocking(target, 0, dataChannel));
+    final data = await connectRfcommInIsolate(target, 0, dataChannel);
     abandonIfClosed([command, data]);
     if (data < 0) {
       _wsClose(command);
