@@ -31,8 +31,16 @@ class HeadsetLogEntry {
 /// driver only reads it and asks the user to activate the headset in Research
 /// Kit if it is off.
 class Mw75Headset extends ChangeNotifier {
-  Mw75Headset({Mw75Transport? transport, this.streamName = defaultStreamName})
-    : _transport = transport ?? Mw75Transport();
+  Mw75Headset({
+    Mw75Transport? transport,
+    this.streamName = defaultStreamName,
+    this.openTimeout = const Duration(seconds: 30),
+  }) : _transport = transport ?? Mw75Transport();
+
+  /// How long [start] waits for the Bluetooth channels to open. The macOS
+  /// plugin tries each channel four times, 3 s apart, after a service lookup;
+  /// a working MW75 opens in under a second.
+  final Duration openTimeout;
 
   /// The LSL name this lab's Research Kit was configured to use.
   static const defaultStreamName = 'MW75 Neuro Neurable Stream';
@@ -190,11 +198,22 @@ class Mw75Headset extends ChangeNotifier {
     _closedSub = _transport.closed.listen(_onChannelClosed);
 
     try {
-      final channels = await _transport.open(
-        address: device.address,
-        dataChannel: Mw75Protocol.dataRfcommChannel,
-        commandServiceUuid16: Mw75Protocol.commandServiceUuid16,
-      );
+      // A device that is not an MW75 (AirPods, a phone) or one that is off can
+      // leave the native open waiting with no answer; without a limit the
+      // Headset card said "Opening Bluetooth channels…" forever.
+      final channels = await _transport
+          .open(
+            address: device.address,
+            dataChannel: Mw75Protocol.dataRfcommChannel,
+            commandServiceUuid16: Mw75Protocol.commandServiceUuid16,
+          )
+          .timeout(
+            openTimeout,
+            onTimeout: () => throw _StartFailure(
+              'Could not connect to "${device.name}" within ${openTimeout.inSeconds} s. Check that it is an MW75 '
+              'Neuro, switched on and nearby, then try again.',
+            ),
+          );
       _log('Opened command channel ${channels.commandChannel} and data channel ${channels.dataChannel}');
       await Future<void>.delayed(const Duration(milliseconds: 500));
       _log('Calibrating the clock against LSL…');

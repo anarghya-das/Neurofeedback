@@ -217,13 +217,27 @@ class WindowsRfcomm {
     required int commandServiceUuid16,
   }) async {
     await close();
+    final attempt = _attempt;
     _closing = false;
     closeReason = null;
     final target = parseBluetoothAddress(address);
 
+    // A connect blocks in its isolate until Windows gives up; if close() ran
+    // meanwhile (the app timed the start out), the socket it returns is closed
+    // here instead of being kept.
+    void abandonIfClosed(List<int> sockets) {
+      if (attempt == _attempt) return;
+      for (final socket in sockets) {
+        if (socket >= 0) _wsClose(socket);
+      }
+      throw PlatformException(code: 'cancelled', message: 'Opening the headset was cancelled.');
+    }
+
     final command = await Isolate.run(() => _connectBlocking(target, commandServiceUuid16, 0));
+    abandonIfClosed([command]);
     if (command < 0) throw _connectError('command channel', -command);
     final data = await Isolate.run(() => _connectBlocking(target, 0, dataChannel));
+    abandonIfClosed([command, data]);
     if (data < 0) {
       _wsClose(command);
       throw _connectError('data channel', -data);
@@ -260,7 +274,11 @@ class WindowsRfcomm {
     }
   }
 
+  /// Bumped by [close], so an [open] still connecting knows it was cancelled.
+  int _attempt = 0;
+
   Future<void> close() async {
+    _attempt++;
     _closing = true;
     final command = _command;
     final data = _data;
