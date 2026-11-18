@@ -4,22 +4,21 @@ import 'dart:io';
 
 import 'app_log.dart';
 
-/// Starts the PowerShell process; replaced in tests.
+/// Starts a PowerShell process; replaced in tests.
 typedef SpeechProcessStarter = Future<Process> Function(String executable, List<String> arguments);
 
 /// Spoken cues on Windows, through the built-in System.Speech synthesizer.
 ///
-/// One PowerShell process stays open and speaks each line written to it, so only
-/// the first cue waits for it to start (about a second). Lines are spoken one
-/// after another with the blocking `Speak`: the first Windows test used
-/// `SpeakAsyncCancelAll` + `SpeakAsync` and only the first cue was heard. The
-/// cues are short and 20 s apart, so nothing queues up in practice. An empty
-/// line (`speak(null)`) is ignored.
+/// Each cue runs its own short PowerShell, with the words in its command line,
+/// and the cues play one after another. The earlier design, one PowerShell
+/// kept open and fed lines on stdin, went quiet after its first two lines in
+/// the second Windows test: the log showed every later cue sent and none
+/// spoken, with no error and the process still running. A new process per cue
+/// takes about a second to start, which the settling time after each cue
+/// (4 s or more) absorbs.
 ///
 /// Every step is written to the app log (`%TEMP%\MW75Bench-log.txt`, see
-/// app_log.dart), since a failure here is otherwise silent: the process
-/// starting or not, the voice it uses, each line spoken, any error PowerShell
-/// reports, and the process exiting.
+/// app_log.dart), since a failure here is otherwise silent.
 class WindowsSpeech {
   WindowsSpeech({SpeechProcessStarter? start, void Function(String message)? log})
     : _startProcess = start ?? ((executable, arguments) => Process.start(executable, arguments)),
@@ -27,95 +26,103 @@ class WindowsSpeech {
 
   static final instance = WindowsSpeech();
 
-  /// Reports on stdout (`ready …`, `spoke …`) and on stderr (`error …`) so each
-  /// step reaches the log.
-  ///
-  /// Each line gets a new synthesizer, bound to the default output as it is at
-  /// that moment. One synthesizer for the whole process kept the output it was
-  /// given at the start: in the second Windows test the cues were logged as
-  /// spoken but nothing was heard, once the MW75's audio had dropped and come
-  /// back (output switched, test ended and restarted), until the app was
-  /// restarted. A short pause before the words gives a Bluetooth output that
-  /// has gone idle time to wake, so the start of a cue is not cut off.
-  static const script =
-      r'$ErrorActionPreference = "Stop"; '
-      r'try { '
-      r'Add-Type -AssemblyName System.Speech; '
-      r'$probe = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
-      r'$voices = @($probe.GetInstalledVoices() | Where-Object { $_.Enabled }).Count; '
-      r'[Console]::Out.WriteLine("ready voice=" + $probe.Voice.Name + " voices=" + $voices + " volume=" + $probe.Volume); '
-      r'$probe.Dispose(); '
-      r'} catch { [Console]::Error.WriteLine("error starting the synthesizer: " + $_); exit 1 } '
-      r'while (($line = [Console]::In.ReadLine()) -ne $null) { '
-      r'if ($line.Length -gt 0) { '
-      r'$s = $null; '
-      r'try { '
-      r'$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
-      r'$s.SetOutputToDefaultAudioDevice(); '
-      r'$p = New-Object System.Speech.Synthesis.PromptBuilder; '
-      r'$p.AppendBreak([TimeSpan]::FromMilliseconds(300)); '
-      r'$p.AppendText($line); '
-      r'$s.Speak($p); '
-      r'[Console]::Out.WriteLine("spoke " + $line) '
-      r'} catch { [Console]::Error.WriteLine("error speaking: " + $_) } '
-      r'finally { if ($s -ne $null) { $s.Dispose() } } '
-      r'} '
-      r'}';
+  /// A cue still waiting after this long is given up, so a stuck PowerShell
+  /// cannot hold back the cues after it.
+  static const timeout = Duration(seconds: 20);
+
+  /// The PowerShell command that speaks [text]: a new synthesizer on the
+  /// default output as it is now, a short pause so a Bluetooth output that has
+  /// gone idle can wake before the words, then the words. Prints `spoke` when
+  /// done, or `error speaking: …` on stderr.
+  static String scriptFor(String text) {
+    final quoted = text.replaceAll("'", "''");
+    return r'$ErrorActionPreference = "Stop"; '
+        r'try { '
+        r'Add-Type -AssemblyName System.Speech; '
+        r'$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
+        r'$s.SetOutputToDefaultAudioDevice(); '
+        r'$p = New-Object System.Speech.Synthesis.PromptBuilder; '
+        r'$p.AppendBreak([TimeSpan]::FromMilliseconds(300)); '
+        "\$p.AppendText('$quoted'); "
+        r'$s.Speak($p); '
+        r'[Console]::Out.WriteLine("spoke voice=" + $s.Voice.Name); '
+        r'$s.Dispose() '
+        r'} catch { [Console]::Error.WriteLine("error speaking: " + $_); exit 1 }';
+  }
 
   final SpeechProcessStarter _startProcess;
   final void Function(String message) _log;
 
-  Future<Process>? _process;
+  /// The cue playing now, and the end of the queue.
+  Process? _current;
+  Future<void> _queue = Future.value();
+
+  /// Bumped by [speak] (null) to drop the cues still queued.
+  int _generation = 0;
 
   void _note(String message) => _log('[speech] $message');
 
-  Future<Process> _start() {
-    _note('starting PowerShell (System.Speech)');
-    final pending = Future.sync(
-      () => _startProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]),
-    );
-    _process = pending;
-    pending.then(
-      (p) {
-        _note('PowerShell started, pid ${p.pid}');
-        p.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen(
-          (line) {
-            if (line.trim().isNotEmpty) _note(line.trim());
-          },
-          onError: (Object _) {},
-        );
-        p.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen(
-          (line) {
-            if (line.trim().isNotEmpty) _note('PowerShell error: ${line.trim()}');
-          },
-          onError: (Object _) {},
-        );
-        p.exitCode.then((code) {
-          _note('PowerShell exited with code $code');
-          if (identical(_process, pending)) _process = null;
-        });
-      },
-      onError: (Object e) {
-        _note('could not start PowerShell: $e');
-        if (identical(_process, pending)) _process = null;
-      },
-    );
-    return pending;
+  /// Nothing to start ahead of time: each cue has its own process.
+  void warmUp() {}
+
+  /// Speaks [text] after any cue still playing. Null stops the cue playing now
+  /// and drops the queued ones. Completes when [text] has been spoken, given up
+  /// or failed; never throws, since every outcome is in the log.
+  Future<void> speak(String? text) {
+    if (text == null) {
+      _generation++;
+      _current?.kill();
+      return Future.value();
+    }
+    final line = text.replaceAll(RegExp(r'[\r\n]+'), ' ').replaceAll(RegExp(r'[^\x20-\x7E]'), ' ').trim();
+    if (line.isEmpty) return Future.value();
+    final generation = _generation;
+    _note('saying "$line"');
+    final done = _queue.then((_) async {
+      if (generation != _generation) {
+        _note('dropped "$line"');
+        return;
+      }
+      await _say(line);
+    });
+    // A failure must not stop the cues after it.
+    _queue = done.catchError((Object _) {});
+    return _queue;
   }
 
-  /// Starts the synthesizer ahead of the first cue.
-  void warmUp() => _process ?? _start();
-
-  Future<void> speak(String? text) async {
-    final line = (text ?? '').replaceAll(RegExp(r'[\r\n]+'), ' ').replaceAll(RegExp(r'[^\x20-\x7E]'), ' ');
+  Future<void> _say(String line) async {
+    final Process process;
     try {
-      final process = await (_process ?? _start());
-      if (line.isNotEmpty) _note('saying "$line"');
-      process.stdin.add(ascii.encode('$line\r\n'));
-      await process.stdin.flush();
+      process = await _startProcess('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        scriptFor(line),
+      ]);
     } catch (e) {
-      _note('could not send "$line" to the synthesizer: $e');
-      rethrow;
+      _note('could not start PowerShell for "$line": $e');
+      return;
+    }
+    _current = process;
+    // Read to the end, so lines printed just before exiting are not lost.
+    final out = process.stdout.transform(utf8.decoder).transform(const LineSplitter()).forEach((l) {
+      if (l.trim().isNotEmpty) _note('${l.trim()}: "$line"');
+    }).catchError((Object _) {});
+    final err = process.stderr.transform(utf8.decoder).transform(const LineSplitter()).forEach((l) {
+      if (l.trim().isNotEmpty) _note('PowerShell error: ${l.trim()}');
+    }).catchError((Object _) {});
+    unawaited(process.stdin.close().catchError((Object _) {}));
+    try {
+      final code = await process.exitCode.timeout(timeout);
+      await Future.wait([out, err]).timeout(const Duration(seconds: 2), onTimeout: () => const []);
+      if (code != 0) _note('PowerShell exited with code $code for "$line"');
+    } on TimeoutException {
+      _note('gave up on "$line" after ${timeout.inSeconds} s');
+      process.kill();
+    } finally {
+      if (identical(_current, process)) _current = null;
     }
   }
 }
