@@ -152,4 +152,30 @@ void main() {
     expect(script, contains('AppendBreak'));
     expect(script.indexOf('AppendBreak'), lessThan(script.indexOf('AppendText')));
   });
+
+  // The Windows tests: after the app started, only its first alpha run was
+  // heard; later runs were silent until the app was killed. A second run must
+  // sound like the first, also after a stop.
+  test('a second and third run are spoken like the first, also after a stop', () async {
+    Future<void> run(List<String> cues) async {
+      for (final cue in cues) {
+        final done = speech.speak(cue);
+        await _settle();
+        started.last.out('spoke voice=Microsoft David Desktop');
+        started.last.finish(0);
+        await done;
+      }
+    }
+
+    const cues = ['Keep your eyes open.', 'Eyes open.', 'Close your eyes.', 'Open your eyes.'];
+    await run(cues);
+    await speech.speak(null); // the test is stopped
+    await run(cues);
+    await run(cues);
+
+    expect(started, hasLength(3 * cues.length));
+    for (final cue in cues) {
+      expect(log.where((l) => l == '[speech] spoke voice=Microsoft David Desktop: "$cue"'), hasLength(3));
+    }
+  });
 }
