@@ -29,19 +29,36 @@ class WindowsSpeech {
 
   /// Reports on stdout (`ready …`, `spoke …`) and on stderr (`error …`) so each
   /// step reaches the log.
+  ///
+  /// Each line gets a new synthesizer, bound to the default output as it is at
+  /// that moment. One synthesizer for the whole process kept the output it was
+  /// given at the start: in the second Windows test the cues were logged as
+  /// spoken but nothing was heard, once the MW75's audio had dropped and come
+  /// back (output switched, test ended and restarted), until the app was
+  /// restarted. A short pause before the words gives a Bluetooth output that
+  /// has gone idle time to wake, so the start of a cue is not cut off.
   static const script =
       r'$ErrorActionPreference = "Stop"; '
       r'try { '
       r'Add-Type -AssemblyName System.Speech; '
-      r'$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
-      r'$s.SetOutputToDefaultAudioDevice(); '
-      r'$voices = @($s.GetInstalledVoices() | Where-Object { $_.Enabled }).Count; '
-      r'[Console]::Out.WriteLine("ready voice=" + $s.Voice.Name + " voices=" + $voices + " volume=" + $s.Volume); '
+      r'$probe = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
+      r'$voices = @($probe.GetInstalledVoices() | Where-Object { $_.Enabled }).Count; '
+      r'[Console]::Out.WriteLine("ready voice=" + $probe.Voice.Name + " voices=" + $voices + " volume=" + $probe.Volume); '
+      r'$probe.Dispose(); '
       r'} catch { [Console]::Error.WriteLine("error starting the synthesizer: " + $_); exit 1 } '
       r'while (($line = [Console]::In.ReadLine()) -ne $null) { '
       r'if ($line.Length -gt 0) { '
-      r'try { $s.Speak($line); [Console]::Out.WriteLine("spoke " + $line) } '
-      r'catch { [Console]::Error.WriteLine("error speaking: " + $_) } '
+      r'$s = $null; '
+      r'try { '
+      r'$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
+      r'$s.SetOutputToDefaultAudioDevice(); '
+      r'$p = New-Object System.Speech.Synthesis.PromptBuilder; '
+      r'$p.AppendBreak([TimeSpan]::FromMilliseconds(300)); '
+      r'$p.AppendText($line); '
+      r'$s.Speak($p); '
+      r'[Console]::Out.WriteLine("spoke " + $line) '
+      r'} catch { [Console]::Error.WriteLine("error speaking: " + $_) } '
+      r'finally { if ($s -ne $null) { $s.Dispose() } } '
       r'} '
       r'}';
 

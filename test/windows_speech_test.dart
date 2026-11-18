@@ -125,4 +125,17 @@ void main() {
     await speech.speak('Eyes\r\nclosed — now');
     expect(process.written.single, 'Eyes closed   now\r\n');
   });
+
+  test('each cue gets a synthesizer bound to the output in use at that moment', () {
+    // A synthesizer made once kept the output it started on, and cues went
+    // silent after the MW75's audio dropped and came back.
+    const script = WindowsSpeech.script;
+    final loop = script.indexOf('while (');
+    expect(loop, greaterThan(0));
+    final perLine = script.substring(loop);
+    expect(perLine, contains('New-Object System.Speech.Synthesis.SpeechSynthesizer'));
+    expect(perLine, contains('SetOutputToDefaultAudioDevice()'));
+    expect(perLine, contains('Dispose()'));
+    expect(script.substring(0, loop), isNot(contains('SetOutputToDefaultAudioDevice')));
+  });
 }
