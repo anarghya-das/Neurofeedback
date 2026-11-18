@@ -7,6 +7,7 @@ import '../band_power.dart';
 import '../lsl_eeg_outlet.dart';
 import 'saved_runs.dart';
 import 'test_screen.dart';
+import 'quick_check.dart';
 
 const _ink = Color(0xFF111216);
 const _muted = Color(0xFF69707D);
@@ -173,12 +174,18 @@ class AlphaControls extends StatelessWidget {
                     ButtonSegment(
                       value: n,
                       label: Text(
-                        '$n each, ${(s.copyWith(blocksPerCondition: n).duration.inSeconds / 60).toStringAsFixed(1)} min',
+                        '$n each, ${(AlphaSettings(blocksPerCondition: n).duration.inSeconds / 60).toStringAsFixed(1)} min',
                       ),
                     ),
                 ],
-                selected: {s.blocksPerCondition},
-                onSelectionChanged: busy ? null : (v) => session.settings = s.copyWith(blocksPerCondition: v.first),
+                // None is selected while the quick check is on.
+                selected: s.isQuick ? const <int>{} : {s.blocksPerCondition},
+                emptySelectionAllowed: true,
+                onSelectionChanged: busy
+                    ? null
+                    : (v) {
+                        if (v.isNotEmpty) session.settings = AlphaSettings(blocksPerCondition: v.first);
+                      },
               ),
             ),
             const SizedBox(height: 4),
@@ -186,6 +193,13 @@ class AlphaControls extends StatelessWidget {
               '${s.blockSeconds.round()} s blocks; the first ${s.settleSeconds.round()} s after each cue are skipped. '
               'Fewer than ${AlphaSummary.minBlocks} of each cannot be tested.',
               style: const TextStyle(fontSize: 11, color: _muted, height: 1.35),
+            ),
+            const SizedBox(height: 8),
+            QuickCheckToggle(
+              value: s.isQuick,
+              seconds: AlphaSettings.quick.duration.inSeconds,
+              note: 'to try a build; too short for a result.',
+              onChanged: busy ? null : (on) => session.settings = on ? AlphaSettings.quick : const AlphaSettings(),
             ),
             const SizedBox(height: 14),
             RunChecklist(
