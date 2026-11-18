@@ -25,6 +25,14 @@ class FocusCalibrationSettings {
   /// Skipped at the start of each block: the spoken cue and settling in.
   final double settleSeconds;
 
+  /// One minute: two short blocks of each, to check that a build works
+  /// (cues, screens, a model being made) without the full calibration. Its
+  /// score is rough; blocks of 15 s leave about 24 windows each after settling,
+  /// above the 12 a block needs, with room for some Bluetooth loss.
+  static const quick = FocusCalibrationSettings(blocksPerCondition: 2, blockSeconds: 15, settleSeconds: 3);
+
+  bool get isQuick => blocksPerCondition == quick.blocksPerCondition && blockSeconds == quick.blockSeconds;
+
   Duration get duration => Duration(seconds: (2 * blocksPerCondition * blockSeconds).round());
 
   FocusCalibrationSettings copyWith({int? blocksPerCondition}) => FocusCalibrationSettings(

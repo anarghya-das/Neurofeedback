@@ -7,6 +7,7 @@ import '../focus_session.dart';
 import '../lsl_eeg_outlet.dart';
 import 'focus_visuals.dart';
 import 'test_screen.dart';
+import 'quick_check.dart';
 
 const _ink = Color(0xFF111216);
 const _muted = Color(0xFF69707D);
@@ -84,11 +85,17 @@ class FocusControls extends StatelessWidget {
                   for (final n in const [3, 4, 6])
                     ButtonSegment(
                       value: n,
-                      label: Text('$n each, ${s.copyWith(blocksPerCondition: n).duration.inMinutes} min'),
+                      label: Text('$n each, ${FocusCalibrationSettings(blocksPerCondition: n).duration.inMinutes} min'),
                     ),
                 ],
-                selected: {s.blocksPerCondition},
-                onSelectionChanged: busy ? null : (v) => session.settings = s.copyWith(blocksPerCondition: v.first),
+                // None is selected while the quick check is on.
+                selected: s.isQuick ? const <int>{} : {s.blocksPerCondition},
+                emptySelectionAllowed: true,
+                onSelectionChanged: busy
+                    ? null
+                    : (v) {
+                        if (v.isNotEmpty) session.settings = FocusCalibrationSettings(blocksPerCondition: v.first);
+                      },
               ),
             ),
             const SizedBox(height: 4),
@@ -96,6 +103,13 @@ class FocusControls extends StatelessWidget {
               '${s.blockSeconds.round()} s blocks with spoken cues. Keep your jaw relaxed and your eyes on the dot '
               'throughout; counting is silent.',
               style: const TextStyle(fontSize: 11, color: _muted, height: 1.35),
+            ),
+            const SizedBox(height: 8),
+            QuickCheckToggle(
+              value: s.isQuick,
+              seconds: FocusCalibrationSettings.quick.duration.inSeconds,
+              note: 'to try a build; the score it makes is rough.',
+              onChanged: busy ? null : (on) => session.settings = on ? FocusCalibrationSettings.quick : const FocusCalibrationSettings(),
             ),
             const SizedBox(height: 12),
             SizedBox(

@@ -27,6 +27,13 @@ class AlphaSettings {
   /// and alpha settling to its new level.
   final double settleSeconds;
 
+  /// About 50 s: two short blocks of each, to check that a build works (cues,
+  /// test screen, saving) without sitting through a full run. Too few blocks
+  /// for the eyes-closed test to be significant.
+  static const quick = AlphaSettings(blocksPerCondition: 2, blockSeconds: 12, settleSeconds: 3);
+
+  bool get isQuick => blocksPerCondition == quick.blocksPerCondition && blockSeconds == quick.blockSeconds;
+
   Duration get duration => Duration(seconds: (2 * blocksPerCondition * blockSeconds).round());
 
   AlphaSettings copyWith({int? blocksPerCondition}) => AlphaSettings(

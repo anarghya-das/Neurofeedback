@@ -31,6 +31,7 @@ export 'src/ui/focus_panel.dart';
 export 'src/ui/headset_panel.dart';
 export 'src/ui/live_eeg_plot.dart';
 export 'src/ui/montage_info.dart';
+export 'src/ui/quick_check.dart';
 export 'src/ui/oddball_panel.dart';
 export 'src/ui/saved_runs.dart';
 export 'src/ui/sound_calibration_dialog.dart';
