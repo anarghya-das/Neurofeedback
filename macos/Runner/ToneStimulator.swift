@@ -271,6 +271,9 @@ final class CueSpeaker {
   func speak(_ text: String) {
     synthesizer.stopSpeaking(at: .immediate)
     let utterance = AVSpeechUtterance(string: text)
+    // The en-US default, which is Samantha (female), like the Windows app's
+    // Zira. Picking a voice from speechVoices() by name or gender silenced the
+    // cues on a Mac in testing, so the default is kept.
     utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
     synthesizer.speak(utterance)
   }

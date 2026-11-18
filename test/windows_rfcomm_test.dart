@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mw75_neuro/src/windows_rfcomm.dart';
 
@@ -35,4 +37,14 @@ void main() {
     expect(devices[1].name, 'JBL Charge 4');
     expect(devices[1].connected, isFalse);
   });
+
+  // The second Windows build failed every start with "Illegal argument in
+  // isolate message: object is unsendable": the connect closure captured the
+  // transport object. This runs the real call on Windows (CI has no Bluetooth
+  // radio, so it fails with a Winsock error, but it must get that far).
+  test('the connect runs in an isolate and returns a socket or a Winsock error', () async {
+    final result = await connectRfcommInIsolate(parseBluetoothAddress('00:11:22:33:44:55'), 0x1101, 0)
+        .timeout(const Duration(seconds: 60));
+    expect(result, isA<int>());
+  }, skip: Platform.isWindows ? false : 'Winsock is Windows only');
 }

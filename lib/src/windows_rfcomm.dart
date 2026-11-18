@@ -148,6 +148,14 @@ int _connectBlocking(int address, int service16, int port) {
 
 int _nonZero(int error) => error == 0 ? 1 : error;
 
+/// Runs [_connectBlocking] in a new isolate. A top-level function, so the
+/// closure sent to the isolate holds only these three numbers: a closure made
+/// inside [WindowsRfcomm.open] also captures `this` (with its timers and
+/// ports), which cannot be sent, and the start failed with "object is
+/// unsendable". Public for a test on Windows.
+Future<int> connectRfcommInIsolate(int address, int service16, int port) =>
+    Isolate.run(() => _connectBlocking(address, service16, port));
+
 /// Isolate entry point: `[socket, role (0 command, 1 data), SendPort]`. Sends
 /// `[role, bytes, time]` for each read and `[role, null, 0.0, reason]` when the
 /// link ends. The read blocks until data arrives or the main isolate closes the
@@ -217,13 +225,27 @@ class WindowsRfcomm {
     required int commandServiceUuid16,
   }) async {
     await close();
+    final attempt = _attempt;
     _closing = false;
     closeReason = null;
     final target = parseBluetoothAddress(address);
 
-    final command = await Isolate.run(() => _connectBlocking(target, commandServiceUuid16, 0));
+    // A connect blocks in its isolate until Windows gives up; if close() ran
+    // meanwhile (the app timed the start out), the socket it returns is closed
+    // here instead of being kept.
+    void abandonIfClosed(List<int> sockets) {
+      if (attempt == _attempt) return;
+      for (final socket in sockets) {
+        if (socket >= 0) _wsClose(socket);
+      }
+      throw PlatformException(code: 'cancelled', message: 'Opening the headset was cancelled.');
+    }
+
+    final command = await connectRfcommInIsolate(target, commandServiceUuid16, 0);
+    abandonIfClosed([command]);
     if (command < 0) throw _connectError('command channel', -command);
-    final data = await Isolate.run(() => _connectBlocking(target, 0, dataChannel));
+    final data = await connectRfcommInIsolate(target, 0, dataChannel);
+    abandonIfClosed([command, data]);
     if (data < 0) {
       _wsClose(command);
       throw _connectError('data channel', -data);
@@ -260,7 +282,11 @@ class WindowsRfcomm {
     }
   }
 
+  /// Bumped by [close], so an [open] still connecting knows it was cancelled.
+  int _attempt = 0;
+
   Future<void> close() async {
+    _attempt++;
     _closing = true;
     final command = _command;
     final data = _data;

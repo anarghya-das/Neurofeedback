@@ -22,6 +22,7 @@ public class Mw75NeuroPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   /// behaviour with a ~5 s wait and a retry.
   private static let openAttemptTimeout = 3.0
   private static let openAttempts = 4
+  private static let sdpTimeout = 10.0
 
   private var eventSink: FlutterEventSink?
   /// Created on first use: making a CBCentralManager is what asks for Bluetooth access.
@@ -73,6 +74,12 @@ public class Mw75NeuroPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       }
       write(bytes.data, to: target == "data" ? dataLink : commandLink, result: result)
     case "close":
+      // Also ends an open still in progress (the app gave up waiting), so the
+      // next open is not refused as busy.
+      if let pending = pendingOpen {
+        pendingOpen = nil
+        pending.result(FlutterError(code: "cancelled", message: "Opening the headset was cancelled", details: nil))
+      }
       close()
       result(nil)
     case "clock":
@@ -208,6 +215,15 @@ public class Mw75NeuroPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     let status = pending.device.performSDPQuery(self)
     if status != kIOReturnSuccess {
       failOpen(code: "sdp_failed", message: "Bluetooth service lookup failed to start (IOReturn \(status))")
+      return
+    }
+    // A device that is off, or not an MW75 (AirPods), may never answer the
+    // lookup; sdpQueryComplete is then never called.
+    DispatchQueue.main.asyncAfter(deadline: .now() + Mw75NeuroPlugin.sdpTimeout) { [weak self] in
+      guard let self = self, self.pendingOpen === pending, self.commandLink == nil else { return }
+      self.failOpen(
+        code: "sdp_timeout",
+        message: "The device did not answer the Bluetooth service lookup. Is it an MW75 Neuro, switched on and nearby?")
     }
   }
 

@@ -308,7 +308,7 @@ class FocusModel {
     final everything = [
       for (final b in [...focusBlocks, ...restBlocks]) ...b,
     ];
-    if (everything.isEmpty) throw StateError('No calibration windows');
+    if (everything.isEmpty) throw StateError('No calibration windows.');
     final muscleLimit = _limit([for (final w in everything) w.muscle]);
     final broadbandLimit = _limit([for (final w in everything) w.broadband]);
     bool clean(FocusWindow w) => w.muscle <= muscleLimit && w.broadband <= broadbandLimit;
