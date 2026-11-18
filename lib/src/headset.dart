@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'app_log.dart';
 import 'eeg_filters.dart';
 import 'gaia.dart';
 import 'lsl_eeg_outlet.dart';
@@ -509,20 +509,8 @@ class Mw75Headset extends ChangeNotifier {
       log.removeFirst();
     }
     if (kDebugMode) debugPrint('[mw75] $message');
-    if (Platform.isWindows) _appendToLogFile(message);
-  }
-
-  /// On Windows the log is also appended to `%TEMP%\MW75Bench-log.txt` and
-  /// flushed line by line, so the last step before a crash can be read afterwards.
-  static void _appendToLogFile(String message) {
-    try {
-      final dir = Platform.environment['TEMP'] ?? Directory.systemTemp.path;
-      File('$dir\\MW75Bench-log.txt').writeAsStringSync(
-        '${DateTime.now().toIso8601String()}  $message\n',
-        mode: FileMode.append,
-        flush: true,
-      );
-    } catch (_) {}
+    // On Windows also to %TEMP%\MW75Bench-log.txt (see app_log.dart).
+    appendAppLog(message);
   }
 
   static String _lslFilterNote(EegFilterSettings f) =>
