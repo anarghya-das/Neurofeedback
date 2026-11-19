@@ -312,7 +312,7 @@ class OddballSession extends ChangeNotifier {
     SoundCalibrations? calibrations,
     this.publishMarkers = true,
     bool? tonesAvailable,
-  }) : tonesAvailable = tonesAvailable ?? !Platform.isWindows,
+  }) : tonesAvailable = tonesAvailable ?? true,
        _tones = tones ?? ToneOutput(),
        calibrations =
            calibrations ?? SoundCalibrations(file: store == null ? null : File('${store.directory.path}/$calibrationFile')) {
@@ -333,15 +333,16 @@ class OddballSession extends ChangeNotifier {
   final Mw75Headset headset;
   final ToneOutput _tones;
 
-  /// Whether this platform can play the tones. The tone player is native macOS
-  /// code (ToneStimulator.swift); Windows has none yet, so there the test would
-  /// wait forever for audio that never starts.
+  /// Whether this platform can play the tones: native code answering the
+  /// "audio…" calls, ToneStimulator.swift on macOS and tone_player.cpp on
+  /// Windows. False refuses the test up front (it was, on Windows, before the
+  /// Windows tone player existed: the run waited forever for audio).
   final bool tonesAvailable;
 
   /// Why the test cannot run on this platform at all; null when it can.
   String? get unavailableReason => tonesAvailable
       ? null
-      : "The auditory oddball isn't available on Windows yet: the app can't play the tones there.";
+      : "The auditory oddball isn't available here: the app can't play the tones on this computer.";
 
   /// Where runs are saved; null keeps them in memory only.
   final TestRunStore? store;

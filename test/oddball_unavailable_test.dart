@@ -43,7 +43,7 @@ void main() {
     final session = OddballSession(headset: Mw75Headset(), tones: tones, publishMarkers: false, tonesAvailable: false);
     addTearDown(session.dispose);
 
-    expect(session.unavailableReason, contains("isn't available on Windows yet"));
+    expect(session.unavailableReason, contains("isn't available"));
 
     await session.start();
     expect(session.busy, isFalse);
@@ -53,6 +53,12 @@ void main() {
     await session.preview();
     expect(session.busy, isFalse);
     expect(tones.calls, isEmpty);
+  });
+
+  test('tones are available by default, on Windows too', () {
+    final session = OddballSession(headset: Mw75Headset(), tones: _NoTones(), publishMarkers: false);
+    addTearDown(session.dispose);
+    expect(session.tonesAvailable, isTrue);
   });
 
   test('with tones the test is not refused', () {
