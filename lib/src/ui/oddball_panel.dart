@@ -82,7 +82,10 @@ class _OddballControlsState extends State<OddballControls> {
   @override
   void initState() {
     super.initState();
-    _volumePoll = Timer.periodic(const Duration(seconds: 2), (_) => session.refreshVolume());
+    // Nothing to poll where the tones cannot play (Windows, for now).
+    if (session.tonesAvailable) {
+      _volumePoll = Timer.periodic(const Duration(seconds: 2), (_) => session.refreshVolume());
+    }
   }
 
   @override
@@ -99,7 +102,9 @@ class _OddballControlsState extends State<OddballControls> {
         final s = session.settings;
         final busy = session.busy;
         final levelProblem = session.levelProblem;
-        final blockedReason = widget.startBlockedReason ?? (levelProblem == null ? null : 'Fix the sound level to start.');
+        final unavailable = session.unavailableReason;
+        final blockedReason =
+            unavailable ?? widget.startBlockedReason ?? (levelProblem == null ? null : 'Fix the sound level to start.');
         final blocked = !busy && blockedReason != null;
         final info = session.outputInfo;
         final bluetooth = busy && info != null ? info.bluetooth : (session.output?.bluetooth ?? _defaultIsBluetooth);
@@ -118,7 +123,7 @@ class _OddballControlsState extends State<OddballControls> {
                 SizedBox(
                   height: 34,
                   child: OutlinedButton.icon(
-                    onPressed: busy ? null : session.preview,
+                    onPressed: busy || unavailable != null ? null : session.preview,
                     icon: const Icon(Icons.volume_up_rounded, size: 15),
                     label: const Text('Preview', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
                     style: OutlinedButton.styleFrom(
@@ -439,6 +444,7 @@ class _SoundLevel extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = session.settings;
     final busy = session.busy;
+    final unavailable = session.unavailableReason;
     final c = session.calibration;
     final volume = session.volume;
     final name = session.outputName ?? 'this output';
@@ -456,7 +462,9 @@ class _SoundLevel extends StatelessWidget {
             height: 26,
             child: TextButton.icon(
               // Calibrations are kept by output name.
-              onPressed: busy || session.outputName == null ? null : () => showSoundCalibration(context, session),
+              onPressed: busy || unavailable != null || session.outputName == null
+                  ? null
+                  : () => showSoundCalibration(context, session),
               icon: const Icon(Icons.tune_rounded, size: 14),
               label: Text(
                 c == null ? 'Calibrate…' : 'Calibration…',

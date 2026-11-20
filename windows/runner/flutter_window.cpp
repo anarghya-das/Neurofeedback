@@ -6,6 +6,7 @@
 #include <variant>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "tone_player.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -51,6 +52,7 @@ bool FlutterWindow::OnCreate() {
         SetFullScreen(wanted);
         result->Success();
       });
+  RegisterToneChannel(flutter_controller_->engine()->messenger());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {

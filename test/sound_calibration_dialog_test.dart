@@ -55,7 +55,7 @@ void main() {
     await loader.load();
 
     final tones = _MeterTones();
-    final session = OddballSession(headset: Mw75Headset(), tones: tones, publishMarkers: false);
+    final session = OddballSession(headset: Mw75Headset(), tones: tones, publishMarkers: false, tonesAvailable: true);
     addTearDown(session.dispose);
     await session.refreshOutputs();
 

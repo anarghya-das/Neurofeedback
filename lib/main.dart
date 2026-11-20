@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_skill/flutter_skill.dart';
 import 'package:mw75_neuro/mw75_neuro.dart';
+import 'package:mw75_neuro/src/app_log.dart';
 import 'package:mw75_neuro/src/app_window.dart';
 
 /// Bench-test app for the MW75 driver.
@@ -20,6 +21,14 @@ import 'package:mw75_neuro/src/app_window.dart';
 /// and drive the app (see .claude/skills/flutter-skill).
 void main() {
   if (kDebugMode) FlutterSkillBinding.ensureInitialized();
+  // The first Windows test showed run times 5 hours ahead (UTC) while the
+  // taskbar clock was right; this records what the app sees as local time.
+  final now = DateTime.now();
+  appendAppLog(
+    'app started: local ${now.toIso8601String()} (${now.timeZoneName}, UTC${now.timeZoneOffset.isNegative ? '' : '+'}'
+    '${now.timeZoneOffset.inMinutes / 60}), UTC ${now.toUtc().toIso8601String()}, '
+    'TZ=${Platform.environment['TZ'] ?? '(not set)'}',
+  );
   runApp(const BenchApp());
 }
 

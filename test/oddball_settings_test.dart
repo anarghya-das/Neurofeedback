@@ -131,7 +131,7 @@ void main() {
     setUp(() async {
       tones = _FakeTones();
       calibrations = SoundCalibrations();
-      session = OddballSession(headset: Mw75Headset(), tones: tones, calibrations: calibrations, publishMarkers: false);
+      session = OddballSession(headset: Mw75Headset(), tones: tones, calibrations: calibrations, publishMarkers: false, tonesAvailable: true);
       await session.refreshOutputs();
     });
     tearDown(() => session.dispose());
@@ -195,7 +195,7 @@ void main() {
 
   group('OddballSession results', () {
     test('counts used and rejected tones of each kind', () {
-      final session = OddballSession(headset: Mw75Headset(), tones: _FakeTones(), publishMarkers: false)
+      final session = OddballSession(headset: Mw75Headset(), tones: _FakeTones(), publishMarkers: false, tonesAvailable: true)
         ..rejectAbove = 100;
       addTearDown(session.dispose);
       // 50 epochs (10 rare); epochs 3 (standard) and 9 (rare) are artifacts.
@@ -218,7 +218,7 @@ void main() {
     });
 
     test('re-baselines the averages to the chosen window', () {
-      final session = OddballSession(headset: Mw75Headset(), tones: _FakeTones(), publishMarkers: false);
+      final session = OddballSession(headset: Mw75Headset(), tones: _FakeTones(), publishMarkers: false, tonesAvailable: true);
       addTearDown(session.dispose);
       // A step of +2 µV from −100 ms on.
       final step = Float64List.fromList([for (var i = 0; i < ErpEpoch.length; i++) ErpEpoch.timeAt(i) >= -0.1 ? 2 : 0]);

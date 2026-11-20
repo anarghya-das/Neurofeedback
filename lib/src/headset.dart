@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'app_log.dart';
 import 'eeg_filters.dart';
 import 'gaia.dart';
 import 'lsl_eeg_outlet.dart';
@@ -31,8 +31,16 @@ class HeadsetLogEntry {
 /// driver only reads it and asks the user to activate the headset in Research
 /// Kit if it is off.
 class Mw75Headset extends ChangeNotifier {
-  Mw75Headset({Mw75Transport? transport, this.streamName = defaultStreamName})
-    : _transport = transport ?? Mw75Transport();
+  Mw75Headset({
+    Mw75Transport? transport,
+    this.streamName = defaultStreamName,
+    this.openTimeout = const Duration(seconds: 30),
+  }) : _transport = transport ?? Mw75Transport();
+
+  /// How long [start] waits for the Bluetooth channels to open. The macOS
+  /// plugin tries each channel four times, 3 s apart, after a service lookup;
+  /// a working MW75 opens in under a second.
+  final Duration openTimeout;
 
   /// The LSL name this lab's Research Kit was configured to use.
   static const defaultStreamName = 'MW75 Neuro Neurable Stream';
@@ -190,11 +198,22 @@ class Mw75Headset extends ChangeNotifier {
     _closedSub = _transport.closed.listen(_onChannelClosed);
 
     try {
-      final channels = await _transport.open(
-        address: device.address,
-        dataChannel: Mw75Protocol.dataRfcommChannel,
-        commandServiceUuid16: Mw75Protocol.commandServiceUuid16,
-      );
+      // A device that is not an MW75 (AirPods, a phone) or one that is off can
+      // leave the native open waiting with no answer; without a limit the
+      // Headset card said "Opening Bluetooth channels…" forever.
+      final channels = await _transport
+          .open(
+            address: device.address,
+            dataChannel: Mw75Protocol.dataRfcommChannel,
+            commandServiceUuid16: Mw75Protocol.commandServiceUuid16,
+          )
+          .timeout(
+            openTimeout,
+            onTimeout: () => throw _StartFailure(
+              'Could not connect to "${device.name}" within ${openTimeout.inSeconds} s. Check that it is an MW75 '
+              'Neuro, switched on and nearby, then try again.',
+            ),
+          );
       _log('Opened command channel ${channels.commandChannel} and data channel ${channels.dataChannel}');
       await Future<void>.delayed(const Duration(milliseconds: 500));
       _log('Calibrating the clock against LSL…');
@@ -509,20 +528,8 @@ class Mw75Headset extends ChangeNotifier {
       log.removeFirst();
     }
     if (kDebugMode) debugPrint('[mw75] $message');
-    if (Platform.isWindows) _appendToLogFile(message);
-  }
-
-  /// On Windows the log is also appended to `%TEMP%\MW75Bench-log.txt` and
-  /// flushed line by line, so the last step before a crash can be read afterwards.
-  static void _appendToLogFile(String message) {
-    try {
-      final dir = Platform.environment['TEMP'] ?? Directory.systemTemp.path;
-      File('$dir\\MW75Bench-log.txt').writeAsStringSync(
-        '${DateTime.now().toIso8601String()}  $message\n',
-        mode: FileMode.append,
-        flush: true,
-      );
-    } catch (_) {}
+    // On Windows also to %TEMP%\MW75Bench-log.txt (see app_log.dart).
+    appendAppLog(message);
   }
 
   static String _lslFilterNote(EegFilterSettings f) =>

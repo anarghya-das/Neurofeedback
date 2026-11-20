@@ -316,7 +316,9 @@ class OddballSession extends ChangeNotifier {
     this.store,
     SoundCalibrations? calibrations,
     this.publishMarkers = true,
-  }) : _tones = tones ?? ToneOutput(),
+    bool? tonesAvailable,
+  }) : tonesAvailable = tonesAvailable ?? true,
+       _tones = tones ?? ToneOutput(),
        calibrations =
            calibrations ?? SoundCalibrations(file: store == null ? null : File('${store.directory.path}/$calibrationFile')) {
     this.calibrations.addListener(notifyListeners);
@@ -335,6 +337,17 @@ class OddballSession extends ChangeNotifier {
 
   final Mw75Headset headset;
   final ToneOutput _tones;
+
+  /// Whether this platform can play the tones: native code answering the
+  /// "audio…" calls, ToneStimulator.swift on macOS and tone_player.cpp on
+  /// Windows. False refuses the test up front (it was, on Windows, before the
+  /// Windows tone player existed: the run waited forever for audio).
+  final bool tonesAvailable;
+
+  /// Why the test cannot run on this platform at all; null when it can.
+  String? get unavailableReason => tonesAvailable
+      ? null
+      : "The auditory oddball isn't available here: the app can't play the tones on this computer.";
 
   /// Where runs are saved; null keeps them in memory only.
   final TestRunStore? store;
@@ -597,6 +610,7 @@ class OddballSession extends ChangeNotifier {
   /// Plays the standard tone, then the rare one.
   Future<void> preview() async {
     if (busy) return;
+    if (_refuseUnavailable()) return;
     final run = ++_run;
     _setState(OddballState.preparing, 'Playing the standard tone, then the rare one…');
     try {
@@ -614,8 +628,18 @@ class OddballSession extends ChangeNotifier {
     _setState(OddballState.idle, 'Standard ${_hz(_settings.standardHz)}, then rare ${_hz(_settings.rareHz)}.');
   }
 
+  /// Shows [unavailableReason] and returns true when the tones cannot play here.
+  bool _refuseUnavailable() {
+    final reason = unavailableReason;
+    if (reason == null) return false;
+    statusText = reason;
+    notifyListeners();
+    return true;
+  }
+
   Future<void> start() async {
     if (busy) return;
+    if (_refuseUnavailable()) return;
     if (headset.state != HeadsetState.streaming) {
       statusText = 'Start raw EEG first.';
       notifyListeners();

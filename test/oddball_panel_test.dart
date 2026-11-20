@@ -92,6 +92,8 @@ void main() {
         tones: _SilentTones(),
         calibrations: calibrations,
         publishMarkers: false,
+        // The macOS view, also when the test runs on Windows.
+        tonesAvailable: true,
       )
         ..outputs = const [
           AudioOutputDevice(id: 1, name: 'MW75 Neuro', isDefault: true, bluetooth: true),
@@ -208,7 +210,7 @@ void main() {
       loader.addFont(Future.value(ByteData.sublistView(bytes)));
     }
     await loader.load();
-    final session = OddballSession(headset: Mw75Headset(), tones: _SilentTones(), publishMarkers: false);
+    final session = OddballSession(headset: Mw75Headset(), tones: _SilentTones(), publishMarkers: false, tonesAvailable: true);
     addTearDown(session.dispose);
     session.runs.add(
       OddballRun(started: DateTime(2026, 10, 9, 2, 1), settings: const OddballSettings())
@@ -286,7 +288,7 @@ void main() {
       loader.addFont(Future.value(ByteData.sublistView(bytes)));
     }
     await loader.load();
-    final session = OddballSession(headset: Mw75Headset(), tones: _SilentTones(), publishMarkers: false);
+    final session = OddballSession(headset: Mw75Headset(), tones: _SilentTones(), publishMarkers: false, tonesAvailable: true);
     addTearDown(session.dispose);
 
     // The panel's width beside the side panel in a 1280-point window.
